@@ -14,9 +14,11 @@ git clone https://github.com/plooum/agent-board ~/.local/opt/agent-board
 Update: `git -C ~/.local/opt/agent-board pull`, then restart the server:
 
 ```bash
-kill $(ps -eo pid,args | awk '/agent-board\/board.py serve/ && !/awk/ {print $1}')
+kill $(ps -eo pid,args | awk '/agent-board\/board.py serve/ && !/awk/ && !/bash/ {print $1}')
 (setsid nohup python3 ~/.local/opt/agent-board/board.py serve > /dev/null 2>&1 &)
 ```
+
+Run the kill as a command of its own (`pkill -f` / `pgrep -f` would match the calling shell).
 
 Clients talk to `http://127.0.0.1:8120` by default; set `AGENT_BOARD_URL` to use another board.
 
