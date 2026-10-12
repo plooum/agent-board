@@ -62,6 +62,15 @@ report('run-start', { suite: 'smoke', total: 9 });
 
 Register the agent once with its `--port`, and events that carry only a `port` land on it.
 
-## Plug in a Claude Code hook (to come)
+## Plug in a Claude Code hook
 
-A `PostToolUse` hook can run `python3 board.py event <agent-id> "<command or file edited>"` (or POST the same to `/api/events`) to show the agent's actions in its timeline.
+`hook.py` is a `PostToolUse` hook that posts what an agent does to its timeline. Add to `.claude/settings.json`:
+
+```json
+{ "hooks": { "PostToolUse": [ { "matcher": "Bash|Edit|Write|NotebookEdit",
+    "hooks": [ { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/path/to/hook.py\" --only-under /.claude/worktrees/" } ] } ] } }
+```
+
+Posted as `action` events: `Bash` as its `description` (else the first line of the command, cut to 120 characters); `Edit` / `Write` / `NotebookEdit` as `Edit <path>` / `Write <path>`, the path relative to the checkout. Other tools post nothing. The agent id is the folder name of the checkout (the nearest parent holding a `.git`).
+
+Options: `--url` (or `AGENT_BOARD_URL`, default `http://127.0.0.1:8120`); `--only-under <substring>` posts only when the checkout path contains it (here, worktrees only, so a main checkout is never posted). The hook uses a 0.5 s timeout, swallows every error, prints nothing and always exits 0.
