@@ -32,6 +32,10 @@ JSON, CORS open (`Access-Control-Allow-Origin: *`), so a page served elsewhere c
 | `GET /api/state` | agents, each with its last action and last run |
 | `GET /api/agents/<id>/events` | `{events, runs}` of one agent |
 | `GET /api/runs?suite=` | test runs, newest first, each with its tests |
+| `POST /api/frame?agent=\|port=` | body: a JPEG (`Content-Type: image/jpeg`). Keeps only the latest frame per agent, in memory (never stored); broadcasts `{type: 'frame', agent, ts}` over the stream, at most ~4 per second per agent |
+| `GET /api/agents/<id>/frame` | the latest JPEG of an agent (404 if none), `no-store` |
+| `POST /api/shots?agent=\|port=&run=&name=` | body: a JPEG. Saved as `shots/<id>.jpg` in the data dir and attached (`shot` field) to the test `name` of run `run`, whether it arrives before or after `test-end`. Pruned after 30 days like events |
+| `GET /api/shots/<id>.jpg` | a saved screenshot |
 | `GET /api/stream` | Server-Sent Events: a message on every new event or agent change |
 
 Event kinds:
@@ -61,6 +65,19 @@ report('run-start', { suite: 'smoke', total: 9 });
 ```
 
 Register the agent once with its `--port`, and events that carry only a `port` land on it.
+
+## Plug in a browser screencast
+
+The page shows a read-only live view of each agent's browser (a Browser panel above the test run) and a thumbnail per test that has a shot. With Playwright and headless Chrome, open a CDP session and post the latest frame:
+
+```python
+cdp = page.context.new_cdp_session(page)
+cdp.on("Page.screencastFrame", lambda ev: (cdp.send("Page.screencastFrameAck", {"sessionId": ev["sessionId"]}), post_latest(base64.b64decode(ev["data"]))))
+cdp.send("Page.startScreencast", {"format": "jpeg", "quality": 60, "maxWidth": 1280, "maxHeight": 900})
+# post_latest: POST the JPEG to /api/frame?port=<port>, from a background thread that drops older frames
+```
+
+A finished test's picture: `page.screenshot(type="jpeg")` posted to `/api/shots?port=<port>&run=<run>&name=<test>`. `dev/board_stream.py` in this repo is a ready-made version.
 
 ## Plug in a Claude Code hook
 

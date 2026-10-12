@@ -15,9 +15,11 @@ import argparse
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -41,6 +43,10 @@ class Store:
         self.events = []  # every event except agent upserts, in order
         self.runs = {}  # run id -> run record
         self.listeners = []
+        self.frames = {}  # agent id -> (jpeg bytes, ts): the latest live frame only, never stored
+        self.frame_sent = {}  # agent id -> time of the last 'frame' broadcast (throttle)
+        self.shots_dir = self.dir / 'shots'
+        self.shots_dir.mkdir(exist_ok=True)
         self.load()
 
     # ---- persistence -------------------------------------------------
@@ -66,6 +72,12 @@ class Store:
             self.runs = {k: r for k, r in self.runs.items() if r['ts'] >= cutoff}
             lines = [json.dumps({'kind': 'agent', 'agent': a['id'], 'ts': a['updated'], 'fields': {f: a[f] for f in AGENT_FIELDS if a.get(f) is not None}, 'created': a['created']}) for a in self.agents.values()]
             lines += [json.dumps(e) for e in self.events]
+            for f in self.shots_dir.glob('*.jpg'):
+                try:
+                    if f.stat().st_mtime < cutoff:
+                        f.unlink()
+                except OSError:
+                    pass
             tmp = self.file.with_suffix('.tmp')
             tmp.write_text('\n'.join(lines) + ('\n' if lines else ''), encoding='utf-8')
             tmp.replace(self.file)
@@ -97,7 +109,7 @@ class Store:
         elif kind == 'run-start':
             self.runs[ev['run']] = {'run': ev['run'], 'agent': ev['agent'], 'suite': ev.get('suite'), 'source': ev.get('source'),
                                     'total': ev.get('total'), 'ts': ts, 'end': None, 'summary': None, 'passed': None, 'failed': None, 'tests': []}
-        elif kind in ('test-start', 'test-end', 'run-end'):
+        elif kind in ('test-start', 'test-end', 'run-end', 'shot'):
             r = self.runs.get(ev['run'])
             if r is None:
                 r = self.runs[ev['run']] = {'run': ev['run'], 'agent': ev['agent'], 'suite': ev.get('suite'), 'source': None,
@@ -109,6 +121,8 @@ class Store:
                 if t is None:
                     t = {'name': ev['name'], 'start': ts, 'ok': None}
                     r['tests'].append(t)
+                if kind == 'shot':
+                    t['shot'] = ev['shot']
                 if kind == 'test-end':
                     t.update(ok=bool(ev.get('ok')), seconds=ev.get('seconds'), message=ev.get('message'), end=ts)
 
@@ -118,6 +132,22 @@ class Store:
             self.apply(ev)
             self.append(ev)
         self.broadcast({'type': 'event', 'event': ev})
+
+    def put_frame(self, agent_id, jpeg):
+        now = time.time()
+        with self.lock:
+            self.frames[agent_id] = (jpeg, now)
+            due = now - self.frame_sent.get(agent_id, 0) >= 0.25
+            if due:
+                self.frame_sent[agent_id] = now
+        if due:
+            self.broadcast({'type': 'frame', 'agent': agent_id, 'ts': now})
+
+    def put_shot(self, agent_id, run, name, jpeg):
+        shot_id = uuid.uuid4().hex[:12]
+        (self.shots_dir / f'{shot_id}.jpg').write_bytes(jpeg)
+        self.post_event({'kind': 'shot', 'agent': agent_id, 'run': run, 'name': name, 'shot': shot_id})
+        return shot_id
 
     def upsert_agent(self, agent_id, fields):
         fields = {k: v for k, v in fields.items() if k in AGENT_FIELDS and v is not None}
@@ -223,6 +253,12 @@ def make_handler(store, page):
                 return self._send(200, store.run_list((qs.get('suite') or [''])[0]))
             if len(parts) == 4 and parts[:2] == ['api', 'agents'] and parts[3] == 'events':
                 return self._send(200, store.agent_events(parts[2]))
+            if len(parts) == 4 and parts[:2] == ['api', 'agents'] and parts[3] == 'frame':
+                f = store.frames.get(parts[2])
+                return self._send(200, f[0], 'image/jpeg') if f else self._send(404, {'error': 'no frame'})
+            if len(parts) == 3 and parts[:2] == ['api', 'shots'] and re.fullmatch(r'[0-9a-f]{12}\.jpg', parts[2]):
+                f = store.shots_dir / parts[2]
+                return self._send(200, f.read_bytes(), 'image/jpeg') if f.exists() else self._send(404, {'error': 'not found'})
             if u.path == '/api/stream':
                 return self._stream()
             self._send(404, {'error': 'not found'})
@@ -256,7 +292,15 @@ def make_handler(store, page):
             parts = [p for p in u.path.split('/') if p]
             try:
                 n = int(self.headers.get('Content-Length') or 0)
-                body = json.loads(self.rfile.read(n) or b'{}')
+                raw = self.rfile.read(n)
+                if u.path in ('/api/frame', '/api/shots'):
+                    qs = {k: v[0] for k, v in parse_qs(u.query).items()}
+                    agent_id = store.resolve(qs)
+                    if u.path == '/api/frame':
+                        store.put_frame(agent_id, raw)
+                        return self._send(200, {'ok': True})
+                    return self._send(200, {'shot': store.put_shot(agent_id, qs.get('run', ''), qs.get('name', ''), raw)})
+                body = json.loads(raw or b'{}')
                 if len(parts) == 3 and parts[:2] == ['api', 'agents']:
                     return self._send(200, store.upsert_agent(parts[2], body))
                 if u.path == '/api/agents/archive':

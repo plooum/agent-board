@@ -70,6 +70,13 @@
   select { background: var(--panel); color: var(--fg); border: 1px solid var(--line); padding: 3px 6px; border-radius: 4px; }
   .empty { color: var(--dim); padding: 20px 0; }
   .hidden { display: none; }
+  .browser { position: relative; display: block; max-width: 640px; }
+  .browser img { width: 100%; display: block; border: 1px solid var(--line); border-radius: 6px; cursor: zoom-in; background: var(--panel); }
+  .badge { font-size: 12px; margin: 0 0 4px; color: var(--dim); }
+  .badge.live { color: var(--ok); }
+  .thumb { height: 22px; border: 1px solid var(--line); border-radius: 3px; cursor: zoom-in; flex: none; align-self: center; }
+  #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: flex; align-items: center; justify-content: center; z-index: 9; cursor: zoom-out; }
+  #lightbox img { max-width: 96vw; max-height: 96vh; }
 </style>
 </head>
 <body>
@@ -122,7 +129,8 @@
   function runTests(r) {
     return r.tests.map((t) => {
       const res = t.ok === null ? 'RUN' : t.ok ? 'PASS' : 'FAIL';
-      return `<div class="test"><span class="r ${res}">${res}</span><span class="n" title="${esc(t.name)}">${esc(t.name)}</span><span class="s">${t.seconds != null ? t.seconds + 's' : ''}</span></div>` +
+      const thumb = t.shot ? `<img class="thumb" data-full="/api/shots/${esc(t.shot)}.jpg" src="/api/shots/${esc(t.shot)}.jpg" loading="lazy" alt="screenshot">` : '';
+      return `<div class="test"><span class="r ${res}">${res}</span><span class="n" title="${esc(t.name)}">${esc(t.name)}</span>${thumb}<span class="s">${t.seconds != null ? t.seconds + 's' : ''}</span></div>` +
         (t.message ? `<div class="msg">${esc(t.message)}</div>` : '');
     }).join('') || '<div class="empty">No test yet.</div>';
   }
@@ -139,7 +147,7 @@
     if (!state.sel) return;
     const id = state.sel;
     const d = await get(`/api/agents/${encodeURIComponent(id)}/events`);
-    if (id === state.sel) { state.detail = d; renderDetail(); }
+    if (id === state.sel) { state.detail = d; renderDetail(); probeFrame(id); }
   }
   function renderDetail() {
     const a = state.agents.find((x) => x.id === state.sel);
@@ -154,10 +162,40 @@
     $('detail').innerHTML = `<h2><span class="dot ${esc(a.status)}"></span>${esc(a.title || a.id)}</h2>
       <div class="meta"><span>${esc(a.name || '')}</span><span class="pill">${esc(a.status)}</span>
       ${a.branch ? `<span>branch ${esc(a.branch)}</span>` : ''}${pr}${a.port ? `<span>port ${a.port}</span>` : ''}${a.checkout ? `<span>${esc(a.checkout)}</span>` : ''}</div>
+      <div id="browser">${browserHtml(a.id)}</div>
       <h3>${cur && !cur.end ? 'Test run in progress' : 'Latest test run'}</h3>
       ${cur ? runBlock(cur, true) : '<div class="empty">No test run yet.</div>'}
       <h3>Timeline</h3>${items.map((i) => i.html).join('') || '<div class="empty">Nothing yet.</div>'}`;
   }
+
+  // Browser panel: the latest live frame of the agent (never stored server side), reloaded on each 'frame' message.
+  const frames = {};  // agent id -> { ts: ms of the last frame message (or from the first load), v: cache-buster }
+  const browserHtml = (id) => {
+    const f = frames[id];
+    if (!f) return '';
+    const live = Date.now() - f.ts < 3000;
+    return `<h3>Browser</h3><div class="badge ${live ? 'live' : ''}">${live ? '&#9679; live' : 'last frame ' + time(f.ts / 1000)}</div>
+      <div class="browser"><img id="frame" data-full="1" src="/api/agents/${encodeURIComponent(id)}/frame?v=${f.v}" alt="agent browser"></div>`;
+  };
+  const refreshBrowser = () => { const el = $('browser'); if (el && state.sel) el.innerHTML = browserHtml(state.sel); };
+  async function onFrame(id, ts) {
+    const f = frames[id] || (frames[id] = { ts: 0, v: 0 });
+    f.ts = ts * 1000; f.v = ts;
+    if (id === state.sel) refreshBrowser();
+    clearTimeout(onFrame.t); onFrame.t = setTimeout(refreshBrowser, 3200);  // flips the badge to "last frame" once frames stop
+  }
+  async function probeFrame(id) {
+    if (frames[id]) return;
+    try { const r = await fetch(`/api/agents/${encodeURIComponent(id)}/frame`, { cache: 'no-store' }); if (r.ok) { frames[id] = { ts: Date.now() - 60000, v: Date.now() }; refreshBrowser(); } } catch (e) { /* none */ }
+  }
+  const lightbox = (src) => {
+    const d = document.createElement('div'); d.id = 'lightbox'; d.innerHTML = `<img src="${src}">`;
+    d.onclick = () => d.remove(); document.body.appendChild(d);
+  };
+  document.addEventListener('click', (e) => {
+    const im = e.target.closest('img.thumb, #frame');
+    if (im) lightbox(im.dataset.full === '1' ? im.src : im.dataset.full);
+  });
 
   async function renderTests() {
     const runs = await get('/api/runs' + (state.suite ? '?suite=' + encodeURIComponent(state.suite) : ''));
@@ -202,7 +240,10 @@
   function connect() {
     const es = new EventSource('/api/stream');
     es.onopen = () => { $('conn').textContent = 'live'; later(); };
-    es.onmessage = later;
+    es.onmessage = (m) => {
+      let d = {}; try { d = JSON.parse(m.data); } catch (e) { /* ignore */ }
+      if (d.type === 'frame') onFrame(d.agent, d.ts); else later();
+    };
     es.onerror = () => { $('conn').textContent = 'reconnecting...'; es.close(); setTimeout(connect, 2000); };
   }
   connect();
