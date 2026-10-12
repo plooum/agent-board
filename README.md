@@ -1,6 +1,34 @@
 # agent-board
 
-A small, self-contained tool: one live web page to follow coding agents (a title, a name, what each is doing now, its test runs as they happen), kept viewable after they finish. Python standard library only, no dependency, no external asset. It listens on `127.0.0.1` only.
+Follow Claude Code sub-agents (or any coding agents) live: what each is doing, its test runs as they happen, and a live view of its headless browser. One web page, kept viewable after the agents finish. Python standard library only, no dependency, no external asset. It listens on `127.0.0.1` only.
+
+## Install
+
+Once per machine, nothing to install but a clone:
+
+```bash
+git clone https://github.com/plooum/agent-board ~/.local/opt/agent-board
+(setsid nohup python3 ~/.local/opt/agent-board/board.py serve > /dev/null 2>&1 &)    # then open http://127.0.0.1:8120
+```
+
+Update: `git -C ~/.local/opt/agent-board pull`, then restart the server:
+
+```bash
+kill $(ps -eo pid,args | awk '/agent-board\/board.py serve/ && !/awk/ {print $1}')
+(setsid nohup python3 ~/.local/opt/agent-board/board.py serve > /dev/null 2>&1 &)
+```
+
+Clients talk to `http://127.0.0.1:8120` by default; set `AGENT_BOARD_URL` to use another board.
+
+For Claude Code, also install the [hook](#plug-in-a-claude-code-hook) and the global skill (below).
+
+### Claude Code skill
+
+`skill/SKILL.md` teaches Claude Code how to register the sub-agents it launches on the board:
+
+```bash
+mkdir -p ~/.claude/skills && ln -s ~/.local/opt/agent-board/skill ~/.claude/skills/agent-board
+```
 
 ## Run it
 
@@ -89,13 +117,17 @@ An agent belongs to a **project**: the absolute path of its main checkout (for a
 
 ## Plug in a Claude Code hook
 
-`hook.py` is a `PostToolUse` hook that posts what an agent does to its timeline. Add it to a project's `.claude/settings.json`, or once for all projects to `~/.claude/settings.json` (with the absolute path of `hook.py`):
+`hook.py` is a `PostToolUse` hook that posts what an agent does to its timeline. Declare it **once for all projects** in `~/.claude/settings.json` (merge it into the existing `hooks` if the file has some):
 
 ```json
 { "hooks": { "PostToolUse": [ { "matcher": "Bash|Edit|Write|NotebookEdit",
-    "hooks": [ { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/path/to/hook.py\" --only-under /.claude/worktrees/" } ] } ] } }
+    "hooks": [ { "type": "command", "command": "python3 ~/.local/opt/agent-board/hook.py --only-under /.claude/worktrees/" } ] } ] } }
 ```
+
+`--only-under <substring>` posts only when the agent's checkout path contains the substring: with `/.claude/worktrees/`, only agents working in Claude Code worktrees are shown, so the main session isn't.
+
+Or per project, in its `.claude/settings.json`, with the same JSON and the path of `hook.py` (e.g. `"$CLAUDE_PROJECT_DIR/path/to/hook.py"`). Don't declare both, or actions are posted twice.
 
 Posted as `action` events: `Bash` as its `description` (else the first line of the command, cut to 120 characters); `Edit` / `Write` / `NotebookEdit` as `Edit <path>` / `Write <path>`, the path relative to the checkout. Other tools post nothing. The agent id is the folder name of the checkout (the nearest parent holding a `.git`).
 
-Options: `--url` (or `AGENT_BOARD_URL`, default `http://127.0.0.1:8120`); `--only-under <substring>` posts only when the checkout path contains it (here, worktrees only, so a main checkout is never posted). The hook uses a 0.5 s timeout, swallows every error, prints nothing and always exits 0.
+Options: `--url` (or `AGENT_BOARD_URL`, default `http://127.0.0.1:8120`); `--only-under <substring>` as above. The hook uses a 0.5 s timeout, swallows every error, prints nothing and always exits 0.
