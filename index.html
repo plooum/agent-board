@@ -23,6 +23,7 @@
   header h1 { font-size: 15px; margin: 0 16px 0 0; }
   header button { background: none; border: 0; color: var(--dim); font: inherit; padding: 4px 10px; cursor: pointer; border-bottom: 2px solid transparent; }
   header button.on { color: var(--fg); border-color: var(--run); }
+  #project { margin-left: 16px; }
   #conn { margin-left: auto; font-size: 12px; color: var(--dim); margin-right: 10px; }
   header button#theme { border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; font-size: 12px; }
   main { flex: 1; display: flex; min-height: 0; }
@@ -87,6 +88,7 @@
   <h1>Agent board</h1>
   <button id="tab-agents" class="on">Agents</button>
   <button id="tab-tests">Tests</button>
+  <select id="project" title="Project"><option value="">All projects</option></select>
   <span id="conn">connecting...</span>
   <button id="theme" title="Switch light / dark"></button>
 </header>
@@ -111,7 +113,9 @@
   try { stored = localStorage.getItem('agent-board-theme'); } catch (e) { /* ignore */ }
   setTheme(stored === 'light' ? 'light' : 'dark', false);
   $('theme').onclick = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', true);
-  const state = { agents: [], sel: null, tab: 'agents', suite: '', open: new Set(), detail: null, detailFor: null };
+  let storedProject = '';
+  try { storedProject = localStorage.getItem('agent-board-project') || ''; } catch (e) { /* ignore */ }
+  const state = { agents: [], sel: null, tab: 'agents', suite: '', project: storedProject, open: new Set(), detail: null, detailFor: null };
 
   // The page is updated in place: elements are keyed, created once, and only touched when their data changed
   // (no innerHTML rebuild of a container), so scroll, hover, open <details> and images survive live updates.
@@ -130,21 +134,40 @@
   const mk = (tag, cls) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
   const setHtml = (el, html) => { if (el._html !== html) { el.innerHTML = html; el._html = html; } };
 
+  // ---- projects: a project is the main checkout's path, shown by its basename ----
+  const projectName = (p) => p.split('/').filter(Boolean).pop() || p;
+  function renderProjects() {
+    const projects = [...new Set(state.agents.map((a) => a.project).filter(Boolean))].sort();
+    if (state.project && !projects.includes(state.project)) projects.push(state.project);
+    const sel = $('project');
+    const opts = '<option value="">All projects</option>' + projects.map((p) => `<option value="${esc(p)}" title="${esc(p)}">${esc(projectName(p))}</option>`).join('');
+    if (sel._html !== opts) { sel.innerHTML = opts; sel._html = opts; }
+    sel.value = state.project;
+  }
+  $('project').onchange = (e) => {
+    state.project = e.target.value;
+    try { localStorage.setItem('agent-board-project', state.project); } catch (err) { /* private mode: not remembered */ }
+    state.suite = ''; renderAgents(); if (state.tab === 'tests') renderTests();
+  };
+  const inProject = (a) => !state.project || a.project === state.project;
+
   // ---- agent list ----
   const liveCache = new Map(), archCache = new Map();
   const agentItem = (a) => {
     const act = a.lastAction ? a.lastAction.text : (a.lastRun ? `${a.lastRun.suite}: ${a.lastRun.summary || 'running'}` : '');
-    return { key: a.id, sig: JSON.stringify([a.title, a.name, a.status, act, a.id === state.sel]),
+    return { key: a.id, sig: JSON.stringify([a.title, a.name, a.status, act, a.id === state.sel, state.project ? '' : a.project]),
       create: () => { const d = mk('div', 'agent'); d.dataset.id = a.id; return d; },
       update: (el) => {
         el.classList.toggle('sel', a.id === state.sel);
         el.innerHTML = `<div class="t"><span class="dot ${esc(a.status)}"></span>${esc(a.title || a.id)}</div>
-          <div class="m">${esc(a.name || '')} &middot; ${esc(a.status)}</div><div class="a">${esc(act)}</div>`;
+          <div class="m">${esc(a.name || '')} &middot; ${esc(a.status)}${!state.project && a.project ? ` &middot; <span title="${esc(a.project)}">${esc(projectName(a.project))}</span>` : ''}</div><div class="a">${esc(act)}</div>`;
       } };
   };
   function renderAgents() {
-    const live = state.agents.filter((a) => a.status !== 'archived');
-    const arch = state.agents.filter((a) => a.status === 'archived');
+    renderProjects();
+    const shown = state.agents.filter(inProject);
+    const live = shown.filter((a) => a.status !== 'archived');
+    const arch = shown.filter((a) => a.status === 'archived');
     reconcile($('live'), live.map(agentItem), liveCache);
     reconcile($('archlist'), arch.map(agentItem), archCache);
     $('noagent').classList.toggle('hidden', live.length > 0);
@@ -280,8 +303,9 @@
   // ---- Tests tab: refreshed when a run starts or ends (or on opening / filtering), runs stay open ----
   const testsCache = new Map();
   async function renderTests() {
-    const runs = await get('/api/runs' + (state.suite ? '?suite=' + encodeURIComponent(state.suite) : ''));
-    const all = state.suite ? await get('/api/runs') : runs;
+    const pq = state.project ? 'project=' + encodeURIComponent(state.project) : '';
+    const runs = await get('/api/runs?' + [state.suite ? 'suite=' + encodeURIComponent(state.suite) : '', pq].filter(Boolean).join('&'));
+    const all = state.suite ? await get('/api/runs' + (pq ? '?' + pq : '')) : runs;
     const suites = [...new Set(all.map((r) => r.suite))].sort();
     const label = (id) => { const a = state.agents.find((x) => x.id === id); return a ? (a.title || a.id) : id; };
     const sel = $('suite');

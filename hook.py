@@ -12,6 +12,9 @@ import os
 import sys
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from board import project_of  # noqa: E402
+
 
 def checkout_root(path):
     p = os.path.abspath(path)
@@ -51,7 +54,7 @@ def main():
         return
     if args.only_under and args.only_under not in root + '/':
         return
-    body = json.dumps({'agent': os.path.basename(root), 'kind': 'action', 'text': text}).encode()
+    body = json.dumps({'agent': os.path.basename(root), 'project': project_of(root), 'kind': 'action', 'text': text}).encode()
     req = urllib.request.Request(args.url.rstrip('/') + '/api/events', body,
                                  {'Content-Type': 'application/json'})
     urllib.request.urlopen(req, timeout=0.5).read()

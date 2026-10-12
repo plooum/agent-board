@@ -4,9 +4,9 @@
 Python standard library only. Usage:
 
     board.py serve [--port 8120] [--data DIR]
-    board.py agent <id> [--title T] [--name N] [--status S] [--branch B] [--pr URL] [--port P] [--checkout PATH]
+    board.py agent <id> [--title T] [--name N] [--status S] [--branch B] [--pr URL] [--port P] [--checkout PATH] [--project P]
     board.py event <id> <text>
-    board.py archive --except <id>...
+    board.py archive --except <id>... [--project P | --all-projects]
 
 The client commands POST to the server (--url, env AGENT_BOARD_URL, default http://127.0.0.1:8120)
 and exit 0 silently when it is not running (-v prints the error). See README.md.
@@ -27,8 +27,39 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 RETENTION = 30 * 24 * 3600
-AGENT_FIELDS = ('title', 'name', 'status', 'branch', 'pr', 'port', 'checkout')
+AGENT_FIELDS = ('title', 'name', 'status', 'branch', 'pr', 'port', 'checkout', 'project')
 DEFAULT_URL = 'http://127.0.0.1:8120'
+
+
+def project_of(path):
+    """The project of a path: the absolute path of its main checkout, or None outside a git checkout.
+
+    For a worktree (a `.git` file `gitdir: <main>/.git/worktrees/<x>`) it is the main checkout."""
+    p = os.path.abspath(path or '.')
+    if not os.path.isdir(p):
+        p = os.path.dirname(p)
+    while True:
+        g = os.path.join(p, '.git')
+        if os.path.isdir(g):
+            return p
+        if os.path.isfile(g):
+            try:
+                line = Path(g).read_text(encoding='utf-8').strip()
+            except OSError:
+                return p
+            if line.startswith('gitdir:'):
+                d = line[len('gitdir:'):].strip()
+                if not os.path.isabs(d):
+                    d = os.path.join(p, d)
+                d = os.path.normpath(d)
+                m = d.find(os.sep + '.git' + os.sep + 'worktrees' + os.sep)
+                if m > 0:
+                    return d[:m]
+            return p
+        parent = os.path.dirname(p)
+        if parent == p:
+            return None
+        p = parent
 
 
 class Store:
@@ -99,6 +130,8 @@ class Store:
         """Applies one event to the in-memory state (also used to replay the file)."""
         kind, ts = ev['kind'], ev['ts']
         a = self.touch(ev['agent'], ts)
+        if kind != 'agent' and ev.get('project') and not a.get('project'):
+            a['project'] = ev['project']
         if kind == 'agent':
             a['created'] = min(a['created'], ev.get('created', ts))
             a.update(ev['fields'])
@@ -165,9 +198,10 @@ class Store:
         self.broadcast({'type': 'agent', 'agent': agent_id})
         return self.agents[agent_id]
 
-    def archive_except(self, keep):
+    def archive_except(self, keep, project=None):
         with self.lock:
-            ids = [i for i, a in self.agents.items() if a.get('status') != 'archived' and i not in keep]
+            ids = [i for i, a in self.agents.items() if a.get('status') != 'archived' and i not in keep
+                   and (not project or a.get('project') == project)]
         for i in ids:
             self.upsert_agent(i, {'status': 'archived'})
         return ids
@@ -179,12 +213,13 @@ class Store:
         if port in (None, ''):
             raise ValueError('agent or port required')
         port = int(port)
+        project = body.get('project') or None
         with self.lock:
-            cands = [a for a in self.agents.values() if a.get('port') == port]
+            cands = [a for a in self.agents.values() if a.get('port') == port and (not project or a.get('project') == project)]
             if cands:
                 return max(cands, key=lambda a: a['updated'])['id']
         agent_id = f'port-{port}'
-        self.upsert_agent(agent_id, {'port': port, 'title': f'Port {port}'})
+        self.upsert_agent(agent_id, {'port': port, 'title': f'Port {port}', 'project': project})
         return agent_id
 
     # ---- views -------------------------------------------------------
@@ -206,9 +241,10 @@ class Store:
             return {'events': [e for e in self.events if e['agent'] == agent_id],
                     'runs': sorted((r for r in self.runs.values() if r['agent'] == agent_id), key=lambda r: r['ts'])}
 
-    def run_list(self, suite):
+    def run_list(self, suite, project=None):
         with self.lock:
-            return sorted((r for r in self.runs.values() if not suite or r['suite'] == suite), key=lambda r: -r['ts'])
+            return sorted((r for r in self.runs.values() if (not suite or r['suite'] == suite)
+                           and (not project or self.agents.get(r['agent'], {}).get('project') == project)), key=lambda r: -r['ts'])
 
     # ---- live stream -------------------------------------------------
     def broadcast(self, msg):
@@ -250,7 +286,7 @@ def make_handler(store, page):
             if u.path == '/api/state':
                 return self._send(200, store.state())
             if u.path == '/api/runs':
-                return self._send(200, store.run_list((qs.get('suite') or [''])[0]))
+                return self._send(200, store.run_list((qs.get('suite') or [''])[0], (qs.get('project') or [''])[0]))
             if len(parts) == 4 and parts[:2] == ['api', 'agents'] and parts[3] == 'events':
                 return self._send(200, store.agent_events(parts[2]))
             if len(parts) == 4 and parts[:2] == ['api', 'agents'] and parts[3] == 'frame':
@@ -302,7 +338,7 @@ def make_handler(store, page):
                     return self._send(200, {'shot': store.put_shot(agent_id, qs.get('run', ''), qs.get('name', ''), raw)})
                 body = json.loads(raw or b'{}')
                 if u.path == '/api/agents/archive':
-                    return self._send(200, {'archived': store.archive_except(body.get('except') or [])})
+                    return self._send(200, {'archived': store.archive_except(body.get('except') or [], body.get('project'))})
                 if len(parts) == 3 and parts[:2] == ['api', 'agents']:
                     return self._send(200, store.upsert_agent(parts[2], body))
                 if u.path == '/api/events':
@@ -358,21 +394,26 @@ def main():
     a = sub.add_parser('agent')
     a.add_argument('id')
     for f in AGENT_FIELDS:
-        a.add_argument('--' + f)
+        a.add_argument('--' + f, help="default: the current directory's project" if f == 'project' else None)
     e = sub.add_parser('event')
     e.add_argument('id')
     e.add_argument('text')
     r = sub.add_parser('archive')
     r.add_argument('--except', dest='keep', nargs='*', default=[])
+    r.add_argument('--project', help="only this project (default: the current directory's)")
+    r.add_argument('--all-projects', action='store_true')
     args = ap.parse_args()
     if args.cmd == 'serve':
         serve(args)
     elif args.cmd == 'agent':
-        post(args, '/api/agents/' + args.id, {f: getattr(args, f) for f in AGENT_FIELDS})
+        body = {f: getattr(args, f) for f in AGENT_FIELDS}
+        body['project'] = args.project or project_of(args.checkout or '.')
+        post(args, '/api/agents/' + args.id, body)
     elif args.cmd == 'event':
         post(args, '/api/events', {'agent': args.id, 'kind': 'action', 'text': args.text})
     elif args.cmd == 'archive':
-        post(args, '/api/agents/archive', {'except': args.keep})
+        project = None if args.all_projects else (args.project or project_of('.'))
+        post(args, '/api/agents/archive', {'except': args.keep, 'project': project})
 
 
 if __name__ == '__main__':

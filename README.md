@@ -13,9 +13,9 @@ Data lives in `~/.local/share/agent-board/` by default: an append-only `events.j
 Command line client (POSTs to the server, `--url` or `AGENT_BOARD_URL`, default `http://127.0.0.1:8120`; exits 0 silently when the server is down, `-v` prints the error, so it can sit in any script):
 
 ```bash
-python3 board.py agent <id> [--title T] [--name N] [--status S] [--branch B] [--pr URL] [--port P] [--checkout PATH]
+python3 board.py agent <id> [--title T] [--name N] [--status S] [--branch B] [--pr URL] [--port P] [--checkout PATH] [--project P]
 python3 board.py event <id> "what the agent is doing"
-python3 board.py archive --except <id> [<id>...]     # archive every other non-archived agent
+python3 board.py archive --except <id> [<id>...] [--project P | --all-projects]   # archive every other non-archived agent of the project
 ```
 
 `agent` upserts: only the given fields change. Statuses used by the page: `working`, `review`, `done`, `archived` (any text is accepted). Archived agents are collapsed in the page but stay viewable.
@@ -26,12 +26,12 @@ JSON, CORS open (`Access-Control-Allow-Origin: *`), so a page served elsewhere c
 
 | Request | Purpose |
 | :--- | :--- |
-| `POST /api/agents/<id>` | upsert an agent: `title name status branch pr port checkout` |
-| `POST /api/agents/archive` | `{"except": [ids]}` |
-| `POST /api/events` | `{agent?, port?, kind, text?, data?, ...}`; without `agent`, resolved from `port` (the most recently updated agent with that port; an unknown port creates the agent `port-<n>`). The server sets `ts` |
+| `POST /api/agents/<id>` | upsert an agent: `title name status branch pr port checkout project` |
+| `POST /api/agents/archive` | `{"except": [ids], "project"?}`; with `project`, only that project's agents |
+| `POST /api/events` | `{agent?, port?, kind, text?, data?, ...}`; without `agent`, resolved from `port` (the most recently updated agent with that port, among the event's `project` when it has one; an unknown port creates the agent `port-<n>`). The server sets `ts` |
 | `GET /api/state` | agents, each with its last action and last run |
 | `GET /api/agents/<id>/events` | `{events, runs}` of one agent |
-| `GET /api/runs?suite=` | test runs, newest first, each with its tests |
+| `GET /api/runs?suite=&project=` | test runs, newest first, each with its tests |
 | `POST /api/frame?agent=\|port=` | body: a JPEG (`Content-Type: image/jpeg`). Keeps only the latest frame per agent, in memory (never stored); broadcasts `{type: 'frame', agent, ts}` over the stream, at most ~4 per second per agent |
 | `GET /api/agents/<id>/frame` | the latest JPEG of an agent (404 if none), `no-store` |
 | `POST /api/shots?agent=\|port=&run=&name=` | body: a JPEG. Saved as `shots/<id>.jpg` in the data dir and attached (`shot` field) to the test `name` of run `run`, whether it arrives before or after `test-end`. Pruned after 30 days like events |
@@ -77,11 +77,19 @@ cdp.send("Page.startScreencast", {"format": "jpeg", "quality": 60, "maxWidth": 1
 # post_latest: POST the JPEG to /api/frame?port=<port>, from a background thread that drops older frames
 ```
 
-A finished test's picture: `page.screenshot(type="jpeg")` posted to `/api/shots?port=<port>&run=<run>&name=<test>`. `dev/board_stream.py` in this repo is a ready-made version.
+A finished test's picture: `page.screenshot(type="jpeg")` posted to `/api/shots?port=<port>&run=<run>&name=<test>`. `board_stream.py`, next to this README, is a ready-made version (it needs only the Playwright objects you pass in).
+
+## Several projects
+
+An agent belongs to a **project**: the absolute path of its main checkout (for a git worktree, the checkout it was made from), shown by its basename. `board.py agent` takes `--project P` and defaults to the project of `--checkout`, else of the current directory (none outside a git checkout). The hook sends it with each action. Agents without one (older data) show under "All projects".
+
+- `archive --except ...` archives only the agents of the same project (the current directory's, or `--project P`); `--all-projects` archives across projects.
+- An event resolved by `port` picks among the agents of the event's `project` when it has one.
+- The page has a **Project** select in its header (remembered in the browser) that filters the agents, the archived ones and the Tests tab.
 
 ## Plug in a Claude Code hook
 
-`hook.py` is a `PostToolUse` hook that posts what an agent does to its timeline. Add to `.claude/settings.json`:
+`hook.py` is a `PostToolUse` hook that posts what an agent does to its timeline. Add it to a project's `.claude/settings.json`, or once for all projects to `~/.claude/settings.json` (with the absolute path of `hook.py`):
 
 ```json
 { "hooks": { "PostToolUse": [ { "matcher": "Bash|Edit|Write|NotebookEdit",
