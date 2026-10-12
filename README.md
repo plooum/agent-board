@@ -1,10 +1,18 @@
 # agent-board
 
+AI agent asked to use this board: read [AGENTS.md](AGENTS.md).
+
 Follow Claude Code sub-agents (or any coding agents) live: what each is doing, its test runs as they happen, and a live view of its headless browser. One web page, kept viewable after the agents finish. Python standard library only, no dependency, no external asset. It listens on `127.0.0.1` only.
 
 ## Install
 
-Once per machine, nothing to install but a clone:
+Once per machine, one command (clones to `~/.local/opt/agent-board`, adds the Claude Code hook to `~/.claude/settings.json` without touching anything else, links the skill, starts the board; idempotent; `--no-start` skips the start; `AGENT_BOARD_HOME` and `CLAUDE_SETTINGS` override the paths):
+
+```bash
+git clone https://github.com/plooum/agent-board ~/.local/opt/agent-board && ~/.local/opt/agent-board/install.sh    # then open http://127.0.0.1:8120
+```
+
+### Manual install
 
 ```bash
 git clone https://github.com/plooum/agent-board ~/.local/opt/agent-board

@@ -9,7 +9,7 @@ A live page (http://127.0.0.1:8120) showing sub-agents: title, name, status, act
 
 ## Is it up?
 
-`curl -s 127.0.0.1:8120/api/state`. If it fails, start it:
+`curl -s 127.0.0.1:8120/api/state`. If it fails and the board isn't installed (no `~/.local/opt/agent-board`), run `~/.local/opt/agent-board/install.sh` (clone it first, see AGENTS.md). Otherwise start it:
 `(setsid nohup python3 ~/.local/opt/agent-board/board.py serve > /dev/null 2>&1 &)`
 
 ## Register a sub-agent
