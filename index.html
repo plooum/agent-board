@@ -70,11 +70,14 @@
   select { background: var(--panel); color: var(--fg); border: 1px solid var(--line); padding: 3px 6px; border-radius: 4px; }
   .empty { color: var(--dim); padding: 20px 0; }
   .hidden { display: none; }
-  .browser { position: relative; display: block; max-width: 640px; }
-  .browser img { width: 100%; display: block; border: 1px solid var(--line); border-radius: 6px; cursor: zoom-in; background: var(--panel); }
+  /* Fixed 16:10 box: it never resizes when the frames' size changes, nor before the first frame. */
+  .browser { position: relative; width: min(100%, calc(70vh * 1.6)); aspect-ratio: 16 / 10; background: #000; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .browser img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; cursor: zoom-in; }
   .badge { font-size: 12px; margin: 0 0 4px; color: var(--dim); }
   .badge.live { color: var(--ok); }
-  .thumb { height: 22px; border: 1px solid var(--line); border-radius: 3px; cursor: zoom-in; flex: none; align-self: center; }
+  .thumb { width: 160px; height: auto; border: 1px solid var(--line); border-radius: 3px; cursor: zoom-in; flex: none; align-self: center; }
+  #hover { position: fixed; width: 480px; z-index: 8; pointer-events: none; border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.5); background: #000; }
+  #hover.hidden { display: none; }
   #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: flex; align-items: center; justify-content: center; z-index: 9; cursor: zoom-out; }
   #lightbox img { max-width: 96vw; max-height: 96vh; }
 </style>
@@ -88,10 +91,11 @@
   <button id="theme" title="Switch light / dark"></button>
 </header>
 <main id="m-agents">
-  <div id="agents"></div>
+  <div id="agents"><div id="live"></div><div id="noagent" class="empty hidden">No active agent.</div><details class="arch hidden" id="arch"><summary id="archsum">Archived (0)</summary><div id="archlist"></div></details></div>
   <div id="detail"><div class="empty">Select an agent.</div></div>
 </main>
-<main id="m-tests" class="hidden"><div id="tests"></div></main>
+<main id="m-tests" class="hidden"><div id="tests"><div style="margin-bottom:10px">Suite <select id="suite"><option value="">All</option></select></div><div id="norun" class="empty hidden">No run yet.</div><div id="runlist"></div></div></main>
+<img id="hover" class="hidden" alt="">
 <script>
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -107,42 +111,79 @@
   try { stored = localStorage.getItem('agent-board-theme'); } catch (e) { /* ignore */ }
   setTheme(stored === 'light' ? 'light' : 'dark', false);
   $('theme').onclick = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', true);
-  const state = { agents: [], sel: null, tab: 'agents', suite: '', open: new Set(), detail: null };
+  const state = { agents: [], sel: null, tab: 'agents', suite: '', open: new Set(), detail: null, detailFor: null };
 
-  const render = () => { renderAgents(); renderDetail(); if (state.tab === 'tests') renderTests(); };
-
-  function agentRow(a) {
-    const act = a.lastAction ? a.lastAction.text : (a.lastRun ? `${a.lastRun.suite}: ${a.lastRun.summary || 'running'}` : '');
-    return `<div class="agent ${a.id === state.sel ? 'sel' : ''}" data-id="${esc(a.id)}">
-      <div class="t"><span class="dot ${esc(a.status)}"></span>${esc(a.title || a.id)}</div>
-      <div class="m">${esc(a.name || '')} &middot; ${esc(a.status)}</div>
-      <div class="a">${esc(act)}</div></div>`;
+  // The page is updated in place: elements are keyed, created once, and only touched when their data changed
+  // (no innerHTML rebuild of a container), so scroll, hover, open <details> and images survive live updates.
+  // items: [{ key, sig, create(), update(el) }]; the container must hold only these elements.
+  function reconcile(container, items, cache) {
+    const seen = new Set();
+    items.forEach((it, i) => {
+      seen.add(it.key);
+      let rec = cache.get(it.key);
+      if (!rec) { rec = { el: it.create(), sig: null }; cache.set(it.key, rec); }
+      if (rec.sig !== it.sig) { it.update(rec.el); rec.sig = it.sig; }
+      if (container.children[i] !== rec.el) container.insertBefore(rec.el, container.children[i] || null);
+    });
+    for (const [k, rec] of [...cache]) if (!seen.has(k)) { rec.el.remove(); cache.delete(k); }
   }
+  const mk = (tag, cls) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
+  const setHtml = (el, html) => { if (el._html !== html) { el.innerHTML = html; el._html = html; } };
+
+  // ---- agent list ----
+  const liveCache = new Map(), archCache = new Map();
+  const agentItem = (a) => {
+    const act = a.lastAction ? a.lastAction.text : (a.lastRun ? `${a.lastRun.suite}: ${a.lastRun.summary || 'running'}` : '');
+    return { key: a.id, sig: JSON.stringify([a.title, a.name, a.status, act, a.id === state.sel]),
+      create: () => { const d = mk('div', 'agent'); d.dataset.id = a.id; return d; },
+      update: (el) => {
+        el.classList.toggle('sel', a.id === state.sel);
+        el.innerHTML = `<div class="t"><span class="dot ${esc(a.status)}"></span>${esc(a.title || a.id)}</div>
+          <div class="m">${esc(a.name || '')} &middot; ${esc(a.status)}</div><div class="a">${esc(act)}</div>`;
+      } };
+  };
   function renderAgents() {
     const live = state.agents.filter((a) => a.status !== 'archived');
     const arch = state.agents.filter((a) => a.status === 'archived');
-    const wasOpen = document.querySelector('details.arch')?.open;
-    $('agents').innerHTML = (live.map(agentRow).join('') || '<div class="empty">No active agent.</div>') +
-      (arch.length ? `<details class="arch" ${wasOpen ? 'open' : ''}><summary>Archived (${arch.length})</summary>${arch.map(agentRow).join('')}</details>` : '');
+    reconcile($('live'), live.map(agentItem), liveCache);
+    reconcile($('archlist'), arch.map(agentItem), archCache);
+    $('noagent').classList.toggle('hidden', live.length > 0);
+    $('arch').classList.toggle('hidden', arch.length === 0);
+    $('archsum').textContent = `Archived (${arch.length})`;
   }
 
-  function runTests(r) {
-    return r.tests.map((t) => {
+  // ---- test runs (used by the detail and by the Tests tab) ----
+  const testItem = (t) => ({ key: t.name, sig: JSON.stringify(t),
+    create: () => mk('div'),
+    update: (el) => {
       const res = t.ok === null ? 'RUN' : t.ok ? 'PASS' : 'FAIL';
-      const thumb = t.shot ? `<img class="thumb" data-full="/api/shots/${esc(t.shot)}.jpg" src="/api/shots/${esc(t.shot)}.jpg" loading="lazy" alt="screenshot">` : '';
-      return `<div class="test"><span class="r ${res}">${res}</span><span class="n" title="${esc(t.name)}">${esc(t.name)}</span>${thumb}<span class="s">${t.seconds != null ? t.seconds + 's' : ''}</span></div>` +
-        (t.message ? `<div class="msg">${esc(t.message)}</div>` : '');
-    }).join('') || '<div class="empty">No test yet.</div>';
-  }
-  function runBlock(r, openByDefault) {
-    const tests = runTests(r);
-    const sum = r.end ? esc(r.summary || `${r.passed} passed, ${r.failed} failed`) : `running (${r.tests.filter((t) => t.ok !== null).length}/${r.total ?? '?'})`;
-    const cls = !r.end ? 'RUN' : r.failed ? 'FAIL' : 'PASS';
-    const key = 'run:' + r.run;
-    const open = state.open.has(key) || (openByDefault && !state.open.has('-' + key));
-    return `<details class="run box" data-key="${esc(key)}" ${open ? 'open' : ''}><summary><b class="${cls}">${esc(r.suite)}</b> <span class="m">${dateTime(r.ts)} &middot; ${esc(r.source || '')} &middot; ${sum}</span></summary>${tests}</details>`;
-  }
+      const url = t.shot ? `/api/shots/${esc(t.shot)}.jpg` : '';
+      setHtml(el, `<div class="test"><span class="r ${res}">${res}</span><span class="n" title="${esc(t.name)}">${esc(t.name)}</span>${t.shot ? `<img class="thumb" data-full="${url}" src="${url}" loading="lazy" alt="screenshot">` : ''}<span class="s">${t.seconds != null ? t.seconds + 's' : ''}</span></div>` +
+        (t.message ? `<div class="msg">${esc(t.message)}</div>` : ''));
+    } });
+  // mode 'detail': summary without agent; 'tests': with the agent label.
+  const runItem = (r, mode, label, openByDefault) => {
+    const key = (mode === 'tests' ? 'trun:' : 'run:') + r.run;
+    return { key, sig: JSON.stringify([r, label]),
+      create: () => {
+        const d = mk('details', 'run box'); d.dataset.key = key;
+        d.open = state.open.has(key) || (!!openByDefault && !state.open.has('-' + key));
+        d.append(mk('summary'), mk('div', 'tests'));
+        d._cache = new Map();
+        return d;
+      },
+      update: (el) => {
+        const cls = !r.end ? 'RUN' : r.failed ? 'FAIL' : 'PASS';
+        const sum = r.end ? esc(r.summary || `${r.passed} passed, ${r.failed} failed`) : `running (${r.tests.filter((t) => t.ok !== null).length}/${r.total ?? '?'})`;
+        setHtml(el.firstChild, mode === 'tests'
+          ? `${dateTime(r.ts)} &middot; <b class="${cls}">${esc(r.suite)}</b> &middot; ${esc(label)} &middot; ${esc(r.source || '')} &middot; ${r.end ? esc(r.summary) : 'running'}`
+          : `<b class="${cls}">${esc(r.suite)}</b> <span class="m">${dateTime(r.ts)} &middot; ${esc(r.source || '')} &middot; ${sum}</span>`);
+        reconcile(el.lastChild, r.tests.map(testItem), el._cache);
+      } };
+  };
 
+  // ---- agent detail ----
+  const curCache = new Map(), tlCache = new Map();
   async function loadDetail() {
     if (!state.sel) return;
     const id = state.sel;
@@ -152,41 +193,66 @@
   function renderDetail() {
     const a = state.agents.find((x) => x.id === state.sel);
     if (!a || !state.detail) return;
+    if (state.detailFor !== a.id) {  // skeleton, once per selected agent
+      state.detailFor = a.id; curCache.clear(); tlCache.clear();
+      $('detail').innerHTML = `<div id="head"></div><div id="browser"></div><h3 id="curtitle"></h3><div id="cur"></div><h3>Timeline</h3><div id="timeline"></div><div id="tlempty" class="empty">Nothing yet.</div>`;
+      $('detail').scrollTop = 0;
+      updateBrowser();
+    }
     const { events, runs } = state.detail;
     const cur = runs.length ? runs[runs.length - 1] : null;
-    const items = events.filter((e) => e.kind === 'action' || e.kind === 'status').map((e) => ({ ts: e.ts, html:
-      `<div class="ev"><time>${time(e.ts)}</time><span class="k">${e.kind}</span><span>${esc(e.text)}</span></div>` }));
-    runs.forEach((r) => items.push({ ts: r.ts, html: runBlock(r, false) }));
-    items.sort((x, y) => y.ts - x.ts);
     const pr = a.pr ? `<a href="${esc(a.pr)}" target="_blank" rel="noopener">PR</a>` : '';
-    $('detail').innerHTML = `<h2><span class="dot ${esc(a.status)}"></span>${esc(a.title || a.id)}</h2>
+    setHtml($('head'), `<h2><span class="dot ${esc(a.status)}"></span>${esc(a.title || a.id)}</h2>
       <div class="meta"><span>${esc(a.name || '')}</span><span class="pill">${esc(a.status)}</span>
-      ${a.branch ? `<span>branch ${esc(a.branch)}</span>` : ''}${pr}${a.port ? `<span>port ${a.port}</span>` : ''}${a.checkout ? `<span>${esc(a.checkout)}</span>` : ''}</div>
-      <div id="browser">${browserHtml(a.id)}</div>
-      <h3>${cur && !cur.end ? 'Test run in progress' : 'Latest test run'}</h3>
-      ${cur ? runBlock(cur, true) : '<div class="empty">No test run yet.</div>'}
-      <h3>Timeline</h3>${items.map((i) => i.html).join('') || '<div class="empty">Nothing yet.</div>'}`;
+      ${a.branch ? `<span>branch ${esc(a.branch)}</span>` : ''}${pr}${a.port ? `<span>port ${a.port}</span>` : ''}${a.checkout ? `<span>${esc(a.checkout)}</span>` : ''}</div>`);
+    $('curtitle').textContent = cur && !cur.end ? 'Test run in progress' : 'Latest test run';
+    reconcile($('cur'), cur ? [runItem(cur, 'detail', '', true)] : [], curCache);
+    $('cur').classList.toggle('hidden', !cur);
+    const items = events.filter((e) => e.kind === 'action' || e.kind === 'status').map((e) => ({ ts: e.ts, item: {
+      key: `${e.ts}|${e.kind}|${e.text}`, sig: '1', create: () => mk('div', 'ev'),
+      update: (el) => { el.innerHTML = `<time>${time(e.ts)}</time><span class="k">${e.kind}</span><span>${esc(e.text)}</span>`; } } }));
+    runs.forEach((r) => items.push({ ts: r.ts, item: runItem(r, 'detail', '', false) }));
+    items.sort((x, y) => y.ts - x.ts);
+    reconcile($('timeline'), items.map((i) => i.item), tlCache);
+    $('tlempty').classList.toggle('hidden', items.length > 0);
   }
 
-  // Browser panel: the latest live frame of the agent (never stored server side), reloaded on each 'frame' message.
-  const frames = {};  // agent id -> { ts: ms of the last frame message (or from the first load), v: cache-buster }
-  const browserHtml = (id) => {
-    const f = frames[id];
-    if (!f) return '';
-    const live = Date.now() - f.ts < 3000;
-    return `<h3>Browser</h3><div class="badge ${live ? 'live' : ''}">${live ? '&#9679; live' : 'last frame ' + time(f.ts / 1000)}</div>
-      <div class="browser"><img id="frame" data-full="1" src="/api/agents/${encodeURIComponent(id)}/frame?v=${f.v}" alt="agent browser"></div>`;
-  };
-  const refreshBrowser = () => { const el = $('browser'); if (el && state.sel) el.innerHTML = browserHtml(state.sel); };
-  async function onFrame(id, ts) {
+  // Browser panel: the latest live frame of the agent (never stored server side). One persistent <img>: a new frame is
+  // loaded off-screen and swapped in once decoded, so there is never a blank frame.
+  const frames = {};  // agent id -> { ts: ms of the last frame message (or from the first load), v: cache-buster, shown, loading }
+  function updateBrowser() {
+    const box = $('browser'), id = state.sel, f = frames[id];
+    if (!box || !f || state.detailFor !== id) return;
+    if (!box.firstChild) {
+      box.innerHTML = '<h3>Browser</h3><div class="badge"></div><div class="browser"><img id="frame" data-full="1" alt="agent browser"></div>';
+    }
+    const live = Date.now() - f.ts < 3000, badge = box.querySelector('.badge');
+    badge.classList.toggle('live', live);
+    const txt = live ? '● live' : 'last frame ' + time(f.ts / 1000);
+    if (badge.textContent !== txt) badge.textContent = txt;
+    const img = $('frame');
+    if (img.dataset.v !== String(f.v) && !f.loading) {
+      f.loading = true;
+      const v = f.v, pre = new Image();
+      const done = (ok) => {
+        f.loading = false;
+        const cur = $('frame');
+        if (ok && cur && state.sel === id) { cur.src = pre.src; cur.dataset.v = String(v); }
+        if (f.v !== v) updateBrowser();
+      };
+      pre.onload = () => done(true); pre.onerror = () => done(false);
+      pre.src = `/api/agents/${encodeURIComponent(id)}/frame?v=${v}`;
+    }
+  }
+  function onFrame(id, ts) {
     const f = frames[id] || (frames[id] = { ts: 0, v: 0 });
     f.ts = ts * 1000; f.v = ts;
-    if (id === state.sel) refreshBrowser();
-    clearTimeout(onFrame.t); onFrame.t = setTimeout(refreshBrowser, 3200);  // flips the badge to "last frame" once frames stop
+    if (id === state.sel) updateBrowser();
+    clearTimeout(onFrame.t); onFrame.t = setTimeout(updateBrowser, 3200);  // flips the badge to "last frame" once frames stop
   }
   async function probeFrame(id) {
-    if (frames[id]) return;
-    try { const r = await fetch(`/api/agents/${encodeURIComponent(id)}/frame`, { cache: 'no-store' }); if (r.ok) { frames[id] = { ts: Date.now() - 60000, v: Date.now() }; refreshBrowser(); } } catch (e) { /* none */ }
+    if (frames[id]) { updateBrowser(); return; }
+    try { const r = await fetch(`/api/agents/${encodeURIComponent(id)}/frame`, { cache: 'no-store' }); if (r.ok) { frames[id] = { ts: Date.now() - 60000, v: Date.now() }; updateBrowser(); } } catch (e) { /* none */ }
   }
   const lightbox = (src) => {
     const d = document.createElement('div'); d.id = 'lightbox'; d.innerHTML = `<img src="${src}">`;
@@ -196,19 +262,38 @@
     const im = e.target.closest('img.thumb, #frame');
     if (im) lightbox(im.dataset.full === '1' ? im.src : im.dataset.full);
   });
+  // Larger preview of a test thumbnail while hovering it.
+  const hover = $('hover');
+  const placeHover = (e) => {
+    const w = 480, h = hover.offsetHeight || 300;
+    hover.style.left = Math.max(8, Math.min(e.clientX + 16, innerWidth - w - 8)) + 'px';
+    hover.style.top = Math.max(8, Math.min(e.clientY + 16, innerHeight - h - 8)) + 'px';
+  };
+  document.addEventListener('mouseover', (e) => {
+    const im = e.target.closest && e.target.closest('img.thumb');
+    if (!im) return;
+    hover.src = im.dataset.full; hover.classList.remove('hidden'); placeHover(e);
+  });
+  document.addEventListener('mousemove', (e) => { if (!hover.classList.contains('hidden')) placeHover(e); });
+  document.addEventListener('mouseout', (e) => { if (e.target.closest && e.target.closest('img.thumb')) hover.classList.add('hidden'); });
 
+  // ---- Tests tab: refreshed when a run starts or ends (or on opening / filtering), runs stay open ----
+  const testsCache = new Map();
   async function renderTests() {
     const runs = await get('/api/runs' + (state.suite ? '?suite=' + encodeURIComponent(state.suite) : ''));
     const all = state.suite ? await get('/api/runs') : runs;
     const suites = [...new Set(all.map((r) => r.suite))].sort();
     const label = (id) => { const a = state.agents.find((x) => x.id === id); return a ? (a.title || a.id) : id; };
-    $('tests').innerHTML = `<div style="margin-bottom:10px">Suite <select id="suite"><option value="">All</option>${suites.map((s) => `<option ${s === state.suite ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div>` +
-      (runs.length ? '' : '<div class="empty">No run yet.</div>') +
-      runs.map((r) => `<details class="run box" data-key="trun:${esc(r.run)}" ${state.open.has('trun:' + r.run) ? 'open' : ''}><summary>${dateTime(r.ts)} &middot; <b class="${!r.end ? 'RUN' : r.failed ? 'FAIL' : 'PASS'}">${esc(r.suite)}</b> &middot; ${esc(label(r.agent))} &middot; ${esc(r.source || '')} &middot; ${r.end ? esc(r.summary) : 'running'}</summary>${runTests(r)}</details>`).join('');
-    $('suite').onchange = (e) => { state.suite = e.target.value; renderTests(); };
+    const sel = $('suite');
+    const opts = '<option value="">All</option>' + suites.map((s) => `<option ${s === state.suite ? 'selected' : ''}>${esc(s)}</option>`).join('');
+    if (sel._html !== opts) { sel.innerHTML = opts; sel._html = opts; }
+    sel.value = state.suite;
+    $('norun').classList.toggle('hidden', runs.length > 0);
+    reconcile($('runlist'), runs.map((r) => runItem(r, 'tests', label(r.agent), false)), testsCache);
   }
+  $('suite').onchange = (e) => { state.suite = e.target.value; renderTests(); };
 
-  // Remember which <details> the user opened, across live re-renders.
+  // Remember which <details> the user opened.
   document.addEventListener('toggle', (e) => {
     const d = e.target, k = d.dataset && d.dataset.key;
     if (!k) return;
@@ -233,16 +318,18 @@
     if (!state.sel && state.agents.length) { state.sel = (state.agents.find((a) => a.status !== 'archived') || state.agents[0]).id; }
     renderAgents();
     await loadDetail();
-    if (state.tab === 'tests') renderTests();
   }
   let timer = null;
   const later = () => { clearTimeout(timer); timer = setTimeout(() => refresh().catch(() => {}), 120); };
   function connect() {
     const es = new EventSource('/api/stream');
-    es.onopen = () => { $('conn').textContent = 'live'; later(); };
+    es.onopen = () => { $('conn').textContent = 'live'; later(); if (state.tab === 'tests') renderTests(); };
     es.onmessage = (m) => {
       let d = {}; try { d = JSON.parse(m.data); } catch (e) { /* ignore */ }
-      if (d.type === 'frame') onFrame(d.agent, d.ts); else later();
+      if (d.type === 'frame') { onFrame(d.agent, d.ts); return; }
+      later();
+      const k = d.event && d.event.kind;
+      if (state.tab === 'tests' && (k === 'run-start' || k === 'run-end')) renderTests();
     };
     es.onerror = () => { $('conn').textContent = 'reconnecting...'; es.close(); setTimeout(connect, 2000); };
   }
