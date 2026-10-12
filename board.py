@@ -301,10 +301,10 @@ def make_handler(store, page):
                         return self._send(200, {'ok': True})
                     return self._send(200, {'shot': store.put_shot(agent_id, qs.get('run', ''), qs.get('name', ''), raw)})
                 body = json.loads(raw or b'{}')
-                if len(parts) == 3 and parts[:2] == ['api', 'agents']:
-                    return self._send(200, store.upsert_agent(parts[2], body))
                 if u.path == '/api/agents/archive':
                     return self._send(200, {'archived': store.archive_except(body.get('except') or [])})
+                if len(parts) == 3 and parts[:2] == ['api', 'agents']:
+                    return self._send(200, store.upsert_agent(parts[2], body))
                 if u.path == '/api/events':
                     kind = body.get('kind')
                     if not kind:
