@@ -71,9 +71,10 @@
   select { background: var(--panel); color: var(--fg); border: 1px solid var(--line); padding: 3px 6px; border-radius: 4px; }
   .empty { color: var(--dim); padding: 20px 0; }
   .hidden { display: none; }
-  /* Fixed 16:10 box: it never resizes when the frames' size changes, nor before the first frame. */
-  .browser { position: relative; width: min(100%, calc(70vh * 1.6)); aspect-ratio: 16 / 10; background: #000; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  /* Fixed 480x300 box (16:10, monitoring only): same size whatever the window, the frames' size, or before the first frame. */
+  .browser { position: relative; flex: none; width: 480px; height: 300px; background: #000; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
   .browser img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; cursor: zoom-in; }
+  .browser .nobrowser { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); }
   .badge { font-size: 12px; margin: 0 0 4px; color: var(--dim); }
   .badge.live { color: var(--ok); }
   .thumb { width: 160px; height: auto; border: 1px solid var(--line); border-radius: 3px; cursor: zoom-in; flex: none; align-self: center; }
@@ -245,21 +246,26 @@
   const frames = {};  // agent id -> { ts: ms of the last frame message (or from the first load), v: cache-buster, shown, loading }
   function updateBrowser() {
     const box = $('browser'), id = state.sel, f = frames[id];
-    if (!box || !f || state.detailFor !== id) return;
+    if (!box || state.detailFor !== id) return;
     if (!box.firstChild) {
-      box.innerHTML = '<h3>Browser</h3><div class="badge"></div><div class="browser"><img id="frame" data-full="1" alt="agent browser"></div>';
+      box.innerHTML = '<h3>Browser</h3><div class="badge"></div><div class="browser"><div class="nobrowser">No browser</div></div>';
     }
+    if (!f) return;
     const live = Date.now() - f.ts < 3000, badge = box.querySelector('.badge');
     badge.classList.toggle('live', live);
     const txt = live ? '● live' : 'last frame ' + time(f.ts / 1000);
     if (badge.textContent !== txt) badge.textContent = txt;
     const img = $('frame');
-    if (img.dataset.v !== String(f.v) && !f.loading) {
+    if ((!img || img.dataset.v !== String(f.v)) && !f.loading) {
       f.loading = true;
       const v = f.v, pre = new Image();
       const done = (ok) => {
         f.loading = false;
-        const cur = $('frame');
+        let cur = $('frame');
+        if (ok && !cur && state.sel === id && state.detailFor === id) {  // first frame: replaces the placeholder
+          const holder = ($('browser') || document).querySelector('.browser');
+          if (holder) { holder.innerHTML = '<img id="frame" data-full="1" alt="agent browser">'; cur = $('frame'); }
+        }
         if (ok && cur && state.sel === id) { cur.src = pre.src; cur.dataset.v = String(v); }
         if (f.v !== v) updateBrowser();
       };
