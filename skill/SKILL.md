@@ -1,20 +1,20 @@
 ---
 name: agent-board
-description: Load when you launch or manage sub-agents and the agent board is installed (~/.local/opt/agent-board), to show them on the board.
+description: À charger quand tu lances ou gères des sous-agents et que l'agent board est installé (~/.local/opt/agent-board), pour les afficher sur le tableau (load when you launch or manage sub-agents and the agent board is installed).
 ---
 
 # Agent board
 
-A live page (http://127.0.0.1:8120) showing sub-agents: title, name, status, actions, test runs, browser view.
+Une page en direct (http://127.0.0.1:8120) qui montre les sous-agents : titre, nom, statut, actions, exécutions de tests, vue du navigateur.
 
-## Is it up?
+## Est-il démarré ?
 
-`curl -s 127.0.0.1:8120/api/state`. If it fails and the board isn't installed (no `~/.local/opt/agent-board`), run `~/.local/opt/agent-board/install.sh` (clone it first, see AGENTS.md). Otherwise start it:
+`curl -s 127.0.0.1:8120/api/state`. Si ça échoue et que le board n'est pas installé (pas de `~/.local/opt/agent-board`), lance `~/.local/opt/agent-board/install.sh` (clone-le d'abord, voir AGENTS.md). Sinon démarre-le :
 `(setsid nohup python3 ~/.local/opt/agent-board/board.py serve > /dev/null 2>&1 &)`
 
-## Register a sub-agent
+## Inscrire un sous-agent
 
-The agent id is `agent-<id>`, the basename of its worktree (what the hook and test runners use). Right after launching a sub-agent in a worktree:
+L'id de l'agent est `agent-<id>`, le nom de base de son worktree (ce qu'utilisent le hook et les lanceurs de tests). Juste après avoir lancé un sous-agent dans un worktree :
 
 ```bash
 B=~/.local/opt/agent-board/board.py
@@ -23,13 +23,13 @@ python3 $B agent agent-<id> --title "..." --name "..." --status working --branch
   --checkout <main checkout>/.claude/worktrees/agent-<id>
 ```
 
-Then update the status:
+Puis mets son statut à jour :
 
-- at review: `python3 $B agent agent-<id> --status review --pr <url>`
-- after merge: `python3 $B agent agent-<id> --status done`
+- à la relecture : `python3 $B agent agent-<id> --status review --pr <url>`
+- après le merge : `python3 $B agent agent-<id> --status done`
 
-## Usage (plan limits, context window)
+## Usage (limites du forfait, fenêtre de contexte)
 
-In the Claude desktop app, at each step (session start, launch, review, merge): call the app's `get_usage` tool, write its JSON output as is to a file in your scratchpad, then `python3 $B usage --file <that file>`. The board shows the 5-hour and weekly limits and your context window. Tell the user when a limit nears 80 %.
+Dans l'app de bureau Claude, à chaque étape (début de session, lancement, relecture, merge) : appelle l'outil `get_usage` de l'app, écris sa sortie JSON telle quelle dans un fichier de ton dossier temporaire, puis `python3 $B usage --file <ce fichier>`. Le board affiche les limites de 5 h et hebdomadaire, et ta fenêtre de contexte. Préviens l'utilisateur quand une limite approche de 80 %.
 
-`board.py` exits 0 silently when the board is down. Actions come from the global `PostToolUse` hook; test runners report through the HTTP API and `board_stream.py` (see the README, "Plug in a test runner" and "Plug in a browser screencast").
+`board.py` sort avec le code 0, sans rien dire, quand le board est arrêté. Les actions viennent du hook global `PostToolUse` ; les lanceurs de tests rendent compte par l'API HTTP et `board_stream.py` (voir le README, « Plug in a test runner » et « Plug in a browser screencast »).
