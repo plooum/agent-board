@@ -78,6 +78,11 @@ class Store:
         self.frame_sent = {}  # agent id -> time of the last 'frame' broadcast (throttle)
         self.shots_dir = self.dir / 'shots'
         self.shots_dir.mkdir(exist_ok=True)
+        self.usage_file = self.dir / 'usage.json'  # the latest plan limits / pilot context reading only
+        try:
+            self.usage = json.loads(self.usage_file.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            self.usage = None
         self.load()
 
     # ---- persistence -------------------------------------------------
@@ -166,6 +171,15 @@ class Store:
             self.append(ev)
         self.broadcast({'type': 'event', 'event': ev})
 
+    def put_usage(self, usage):
+        if not isinstance(usage, dict):
+            raise ValueError('usage must be an object')
+        usage.setdefault('ts', time.time())
+        with self.lock:
+            self.usage = usage
+            self.usage_file.write_text(json.dumps(usage), encoding='utf-8')
+        self.broadcast({'type': 'usage', 'usage': usage})
+
     def put_frame(self, agent_id, jpeg):
         now = time.time()
         with self.lock:
@@ -234,7 +248,7 @@ class Store:
 
     def state(self):
         with self.lock:
-            return {'agents': sorted((self.agent_view(a) for a in self.agents.values()), key=lambda a: -a['updated']), 'now': time.time()}
+            return {'agents': sorted((self.agent_view(a) for a in self.agents.values()), key=lambda a: -a['updated']), 'now': time.time(), 'usage': self.usage}
 
     def agent_events(self, agent_id):
         with self.lock:
@@ -337,6 +351,9 @@ def make_handler(store, page):
                         return self._send(200, {'ok': True})
                     return self._send(200, {'shot': store.put_shot(agent_id, qs.get('run', ''), qs.get('name', ''), raw)})
                 body = json.loads(raw or b'{}')
+                if u.path == '/api/usage':
+                    store.put_usage(body)
+                    return self._send(200, {'ok': True})
                 if u.path == '/api/agents/archive':
                     return self._send(200, {'archived': store.archive_except(body.get('except') or [], body.get('project'))})
                 if len(parts) == 3 and parts[:2] == ['api', 'agents']:
@@ -402,6 +419,8 @@ def main():
     r.add_argument('--except', dest='keep', nargs='*', default=[])
     r.add_argument('--project', help="only this project (default: the current directory's)")
     r.add_argument('--all-projects', action='store_true')
+    g = sub.add_parser('usage', help="the pilot's plan limits / context reading (the app's get_usage output), as JSON")
+    g.add_argument('--file', default='-', help='JSON file, or - for stdin (default)')
     args = ap.parse_args()
     if args.cmd == 'serve':
         serve(args)
@@ -414,6 +433,11 @@ def main():
     elif args.cmd == 'archive':
         project = None if args.all_projects else (args.project or project_of('.'))
         post(args, '/api/agents/archive', {'except': args.keep, 'project': project})
+    elif args.cmd == 'usage':
+        raw = sys.stdin.read() if args.file == '-' else Path(args.file).expanduser().read_text(encoding='utf-8')
+        body = json.loads(raw)
+        body.update(ts=time.time(), project=project_of('.'))
+        post(args, '/api/usage', body)
 
 
 if __name__ == '__main__':

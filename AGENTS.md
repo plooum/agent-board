@@ -1,11 +1,11 @@
-# AGENTS.md: using agent-board in a project
+# AGENTS.md : utiliser agent-board dans un projet
 
-For an AI agent told to use this board to follow its sub-agents. Do these in order.
+Pour un agent IA à qui on dit d'utiliser ce tableau pour suivre ses sous-agents. Fais ceci dans l'ordre.
 
-1. **Install and run.** Check: `curl -s 127.0.0.1:8120/api/state`. If it fails:
+1. **Installer et lancer.** Vérifie : `curl -s 127.0.0.1:8120/api/state`. Si ça échoue :
    `git clone https://github.com/plooum/agent-board ~/.local/opt/agent-board && ~/.local/opt/agent-board/install.sh`
-   **Tell the user first** if `~/.claude/settings.json` already exists: the script adds a hook to that global config (it keeps everything else and writes a `.bak`). A new Claude Code session may be needed for the hook to apply. The script is idempotent; `--no-start` skips starting the server.
-2. **While piloting.** Load the `agent-board` skill. Launch sub-agents with worktree isolation (the hook only follows agents in `.claude/worktrees/`). Register, archive and update their status as the skill says.
-3. **Wire the project's tests (optional).** Test runners post events: README, "Plug in a test runner". Playwright runners stream the browser with `board_stream.py`: README, "Plug in a browser screencast". The project must work without the board: import in a `try`, locate it through `AGENT_BOARD_HOME`, never fail when the board is down.
-4. **Tell future agents.** Add one line to the project's `CLAUDE.md` (or pilot notes): "Sub-agents are followed on the agent board (https://github.com/plooum/agent-board); load the `agent-board` skill before launching them."
-5. **The user watches** at http://127.0.0.1:8120 in their own browser (project filter in the header).
+   **Préviens d'abord l'utilisateur** si `~/.claude/settings.json` existe déjà : le script ajoute un hook à cette configuration globale (il garde tout le reste et écrit un `.bak`). Une nouvelle session Claude Code peut être nécessaire pour que le hook s'applique. Le script est idempotent ; `--no-start` évite de démarrer le serveur.
+2. **Pendant le pilotage.** Charge le skill `agent-board`. Lance les sous-agents avec l'isolation en worktree (le hook ne suit que les agents dans `.claude/worktrees/`). Inscris-les, archive-les et mets leur statut à jour comme le dit le skill.
+3. **Brancher les tests du projet (facultatif).** Les lanceurs de tests postent des événements : README, « Plug in a test runner ». Les lanceurs Playwright diffusent le navigateur avec `board_stream.py` : README, « Plug in a browser screencast ». Le projet doit fonctionner sans le tableau : import dans un `try`, localisation par `AGENT_BOARD_HOME`, jamais d'échec quand le tableau est arrêté.
+4. **Prévenir les agents suivants.** Ajoute une ligne au `CLAUDE.md` du projet (ou aux notes du pilote) : « Les sous-agents sont suivis sur l'agent board (https://github.com/plooum/agent-board) ; charge le skill `agent-board` avant de les lancer. »
+5. **L'utilisateur regarde** sur http://127.0.0.1:8120 dans son propre navigateur (filtre par projet dans l'en-tête).
