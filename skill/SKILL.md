@@ -28,4 +28,8 @@ Then update the status:
 - at review: `python3 $B agent agent-<id> --status review --pr <url>`
 - after merge: `python3 $B agent agent-<id> --status done`
 
+## Usage (plan limits, context window)
+
+In the Claude desktop app, at each step (session start, launch, review, merge): call the app's `get_usage` tool, write its JSON output as is to a file in your scratchpad, then `python3 $B usage --file <that file>`. The board shows the 5-hour and weekly limits and your context window. Tell the user when a limit nears 80 %.
+
 `board.py` exits 0 silently when the board is down. Actions come from the global `PostToolUse` hook; test runners report through the HTTP API and `board_stream.py` (see the README, "Plug in a test runner" and "Plug in a browser screencast").

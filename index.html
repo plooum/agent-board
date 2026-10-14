@@ -26,6 +26,14 @@
   #project { margin-left: 16px; }
   #conn { margin-left: auto; font-size: 12px; color: var(--dim); margin-right: 10px; }
   header button#theme { border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; font-size: 12px; }
+  #usage { display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: center; padding: 6px 14px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--dim); }
+  #usage .g { display: flex; align-items: center; gap: 8px; }
+  #usage .g b { color: var(--fg); font-weight: 600; }
+  #usage .bar { position: relative; width: 120px; height: 6px; border-radius: 3px; background: var(--line); }
+  #usage .bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--run); }
+  #usage .bar.warn i { background: var(--warn); } #usage .bar.bad i { background: var(--bad); }
+  #usage .bar s { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--dim); }
+  #usage .age { margin-left: auto; }
   main { flex: 1; display: flex; min-height: 0; }
   #agents { width: 340px; flex: none; overflow: auto; border-right: 1px solid var(--line); padding: 8px; }
   #detail, #tests { flex: 1; overflow: auto; padding: 16px 20px; }
@@ -93,6 +101,7 @@
   <span id="conn">connecting...</span>
   <button id="theme" title="Switch light / dark"></button>
 </header>
+<div id="usage" class="hidden"></div>
 <main id="m-agents">
   <div id="agents"><div id="live"></div><div id="noagent" class="empty hidden">No active agent.</div><details class="arch hidden" id="arch"><summary id="archsum">Archived (0)</summary><div id="archlist"></div></details></div>
   <div id="detail"><div class="empty">Select an agent.</div></div>
@@ -116,7 +125,39 @@
   $('theme').onclick = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', true);
   let storedProject = '';
   try { storedProject = localStorage.getItem('agent-board-project') || ''; } catch (e) { /* ignore */ }
-  const state = { agents: [], sel: null, tab: 'agents', suite: '', project: storedProject, open: new Set(), detail: null, detailFor: null };
+  const state = { agents: [], sel: null, tab: 'agents', suite: '', project: storedProject, open: new Set(), detail: null, detailFor: null, usage: null };
+
+  // Plan limits and the pilot's context window: the latest reading the pilot sent (board.py usage).
+  // Small and passive, so rebuilt whole; the times left are recomputed from resetsAt every minute.
+  const left = (iso) => {
+    const m = Math.max(0, Math.round((Date.parse(iso) - Date.now()) / 60000));
+    return m >= 1440 ? `${Math.floor(m / 1440)}d ${Math.floor(m % 1440 / 60)}h` : m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}` : `${m} min`;
+  };
+  const kTok = (n) => n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}k`;
+  const gauge = (label, pct, text, limit = 100, mark = null) => {
+    const lvl = pct >= limit * 0.95 ? ' bad' : pct >= limit * 0.8 ? ' warn' : '';
+    return `<span class="g"><b>${esc(label)}</b><span class="bar${lvl}"><i style="width:${Math.min(100, pct)}%"></i>` +
+      (mark != null ? `<s style="left:${mark}%"></s>` : '') + `</span>${esc(text)}</span>`;
+  };
+  function renderUsage() {
+    const u = state.usage;
+    $('usage').classList.toggle('hidden', !u);
+    if (!u) return;
+    const short = { '5-hour limit': '5h', 'Weekly · all models': 'Week' };
+    let h = '';
+    if (u.plan && u.plan.status === 'ok') {
+      for (const w of u.plan.windows || []) h += gauge(short[w.label] || w.label, w.percentUsed, `${w.percentUsed} %` + (w.resetsAt ? ` · resets in ${left(w.resetsAt)}` : ''));
+    } else if (u.plan) h += `<span class="g"><b>Plan</b>${esc(u.plan.status)}${u.plan.note ? ' · ' + esc(u.plan.note) : ''}</span>`;
+    const c = u.context;
+    if (c && c.status === 'ok') {
+      const at = c.autoCompactsAtPercent || 100;
+      h += gauge('Context', c.percentUsed, `${kTok(c.tokensUsed)} / ${kTok(c.contextWindow)} · ${c.percentUsed} %`, at, c.autoCompactsAtPercent);
+    } else if (c) h += `<span class="g"><b>Context</b>${esc(c.status)}</span>`;
+    const age = Math.max(0, Math.round((Date.now() / 1000 - u.ts) / 60));
+    h += `<span class="age">updated ${age ? age + ' min ago' : 'just now'}</span>`;
+    $('usage').innerHTML = h;
+  }
+  setInterval(renderUsage, 60000);
 
   // The page is updated in place: elements are keyed, created once, and only touched when their data changed
   // (no innerHTML rebuild of a container), so scroll, hover, open <details> and images survive live updates.
@@ -344,7 +385,8 @@
   $('tab-tests').onclick = () => setTab('tests');
 
   async function refresh() {
-    state.agents = (await get('/api/state')).agents;
+    const st = await get('/api/state');
+    state.agents = st.agents; state.usage = st.usage; renderUsage();
     if (!state.sel && state.agents.length) { state.sel = (state.agents.find((a) => a.status !== 'archived') || state.agents[0]).id; }
     renderAgents();
     await loadDetail();
@@ -357,6 +399,7 @@
     es.onmessage = (m) => {
       let d = {}; try { d = JSON.parse(m.data); } catch (e) { /* ignore */ }
       if (d.type === 'frame') { onFrame(d.agent, d.ts); return; }
+      if (d.type === 'usage') { state.usage = d.usage; renderUsage(); return; }
       later();
       const k = d.event && d.event.kind;
       if (state.tab === 'tests' && (k === 'run-start' || k === 'run-end')) renderTests();

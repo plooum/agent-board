@@ -2,7 +2,7 @@
 
 AI agent asked to use this board: read [AGENTS.md](AGENTS.md).
 
-Follow Claude Code sub-agents (or any coding agents) live: what each is doing, its test runs as they happen, and a live view of its headless browser. One web page, kept viewable after the agents finish. Python standard library only, no dependency, no external asset. It listens on `127.0.0.1` only.
+Follow Claude Code sub-agents (or any coding agents) live: what each is doing, its test runs as they happen, and a live view of its headless browser; a strip above shows the plan limits (5-hour, weekly) and the pilot's context window, as last sent by the pilot. One web page, kept viewable after the agents finish. Python standard library only, no dependency, no external asset. It listens on `127.0.0.1` only.
 
 ## Install
 
@@ -54,7 +54,10 @@ Command line client (POSTs to the server, `--url` or `AGENT_BOARD_URL`, default 
 python3 board.py agent <id> [--title T] [--name N] [--status S] [--branch B] [--pr URL] [--port P] [--checkout PATH] [--project P]
 python3 board.py event <id> "what the agent is doing"
 python3 board.py archive --except <id> [<id>...] [--project P | --all-projects]   # archive every other non-archived agent of the project
+python3 board.py usage [--file F]   # plan limits + context window, JSON from F or stdin (the Claude desktop app's get_usage output)
 ```
+
+`usage` takes the JSON the Claude desktop app's `get_usage` tool returns (`plan.windows[]`: `label`, `percentUsed`, `resetsAt`; `context`: `tokensUsed`, `contextWindow`, `percentUsed`, `autoCompactsAtPercent`; either may have a `status` other than `ok`). Only the latest reading is kept (`usage.json` in the data dir). The page shows one gauge per window with the time left until `resetsAt`, a `Context` gauge with a mark at the auto-compact threshold, and the reading's age; gauges turn orange from 80 % and red from 95 % (of the threshold, for the context). Claude Code's status line would be the natural source, but it doesn't run in the desktop app.
 
 `agent` upserts: only the given fields change. Statuses used by the page: `working`, `review`, `done`, `archived` (any text is accepted). Archived agents are collapsed in the page but stay viewable.
 
@@ -67,7 +70,8 @@ JSON, CORS open (`Access-Control-Allow-Origin: *`), so a page served elsewhere c
 | `POST /api/agents/<id>` | upsert an agent: `title name status branch pr port checkout project` |
 | `POST /api/agents/archive` | `{"except": [ids], "project"?}`; with `project`, only that project's agents |
 | `POST /api/events` | `{agent?, port?, kind, text?, data?, ...}`; without `agent`, resolved from `port` (the most recently updated agent with that port, among the event's `project` when it has one; an unknown port creates the agent `port-<n>`). The server sets `ts` |
-| `GET /api/state` | agents, each with its last action and last run |
+| `GET /api/state` | agents, each with its last action and last run, and `usage` (the latest reading, or null) |
+| `POST /api/usage` | the plan limits / context reading (see `board.py usage`); kept, then broadcast as `{type: 'usage', usage}` |
 | `GET /api/agents/<id>/events` | `{events, runs}` of one agent |
 | `GET /api/runs?suite=&project=` | test runs, newest first, each with its tests |
 | `POST /api/frame?agent=\|port=` | body: a JPEG (`Content-Type: image/jpeg`). Keeps only the latest frame per agent, in memory (never stored); broadcasts `{type: 'frame', agent, ts}` over the stream, at most ~4 per second per agent |
