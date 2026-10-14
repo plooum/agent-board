@@ -26,6 +26,9 @@
   #project { margin-left: 16px; }
   #conn { margin-left: auto; font-size: 12px; color: var(--dim); margin-right: 10px; }
   header button#theme { border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; font-size: 12px; }
+  #archidle { display: block; margin: 0 0 8px auto; background: none; border: 1px solid var(--line); border-radius: 4px; color: var(--dim); font: inherit; font-size: 12px; padding: 2px 8px; cursor: pointer; }
+  #archidle:hover { color: var(--fg); }
+  #archidle.hidden { display: none; }
   #usage { display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: center; padding: 6px 14px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--dim); }
   #usage .g { display: flex; align-items: center; gap: 8px; }
   #usage .g b { color: var(--fg); font-weight: 600; }
@@ -103,7 +106,7 @@
 </header>
 <div id="usage" class="hidden"></div>
 <main id="m-agents">
-  <div id="agents"><div id="live"></div><div id="noagent" class="empty hidden">No active agent.</div><details class="arch hidden" id="arch"><summary id="archsum">Archived (0)</summary><div id="archlist"></div></details></div>
+  <div id="agents"><button id="archidle" class="hidden" title="Archive the agents that are neither working nor waiting for review (of the selected project)"></button><div id="live"></div><div id="noagent" class="empty hidden">No active agent.</div><details class="arch hidden" id="arch"><summary id="archsum">Archived (0)</summary><div id="archlist"></div></details></div>
   <div id="detail"><div class="empty">Select an agent.</div></div>
 </main>
 <main id="m-tests" class="hidden"><div id="tests"><div style="margin-bottom:10px">Suite <select id="suite"><option value="">All</option></select></div><div id="norun" class="empty hidden">No run yet.</div><div id="runlist"></div></div></main>
@@ -205,6 +208,7 @@
           <div class="m">${esc(a.name || '')} &middot; ${esc(a.status)}${!state.project && a.project ? ` &middot; <span title="${esc(a.project)}">${esc(projectName(a.project))}</span>` : ''}</div><div class="a">${esc(act)}</div>`;
       } };
   };
+  const ACTIVE = new Set(['working', 'review']);
   function renderAgents() {
     renderProjects();
     const shown = state.agents.filter(inProject);
@@ -215,7 +219,16 @@
     $('noagent').classList.toggle('hidden', live.length > 0);
     $('arch').classList.toggle('hidden', arch.length === 0);
     $('archsum').textContent = `Archived (${arch.length})`;
+    const idle = live.filter((a) => !ACTIVE.has(a.status)).length;
+    $('archidle').classList.toggle('hidden', idle === 0);
+    $('archidle').textContent = `Archive inactive (${idle})`;
   }
+  // Inactive = neither working nor waiting for review: archived in one click, the shown project's only.
+  $('archidle').onclick = async () => {
+    const keep = state.agents.filter((a) => ACTIVE.has(a.status) || !inProject(a)).map((a) => a.id);
+    await fetch('/api/agents/archive', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ except: keep, project: state.project || null }) });
+  };
 
   // ---- test runs (used by the detail and by the Tests tab) ----
   const testItem = (t) => ({ key: t.name, sig: JSON.stringify(t),

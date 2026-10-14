@@ -59,7 +59,7 @@ python3 board.py usage [--file F]   # plan limits + context window, JSON from F 
 
 `usage` takes the JSON the Claude desktop app's `get_usage` tool returns (`plan.windows[]`: `label`, `percentUsed`, `resetsAt`; `context`: `tokensUsed`, `contextWindow`, `percentUsed`, `autoCompactsAtPercent`; either may have a `status` other than `ok`). Only the latest reading is kept (`usage.json` in the data dir). The page shows one gauge per window with the time left until `resetsAt`, a `Context` gauge with a mark at the auto-compact threshold, and the reading's age; gauges turn orange from 80 % and red from 95 % (of the threshold, for the context). Claude Code's status line would be the natural source, but it doesn't run in the desktop app.
 
-`agent` upserts: only the given fields change. Statuses used by the page: `working`, `review`, `done`, `archived` (any text is accepted). Archived agents are collapsed in the page but stay viewable.
+`agent` upserts: only the given fields change. Statuses used by the page: `working`, `review`, `done`, `archived` (any text is accepted). Archived agents are collapsed in the page but stay viewable. The page's **Archive inactive** button archives, in one click, the agents of the selected project that are neither `working` nor `review`.
 
 ## HTTP API
 
