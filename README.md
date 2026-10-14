@@ -58,7 +58,7 @@ python3 board.py usage [--file F]   # plan limits + context window, JSON from F 
 python3 board.py pilot --status busy|waiting|idle [--waiting "what it waits for"]   # the current directory's project pilot
 ```
 
-`pilot` sets the line of the current directory's project pilot under the limits strip: its state (`waiting` is highlighted with what it waits for from the user) and the context window of its last `usage` reading (a reading's `context` goes to its `project`'s pilot). Kept in `pilots.json`; no command history.
+`pilot` sets the line of the current directory's project pilot under the limits strip: its state (`waiting` is highlighted with what it waits for from the user) and the context window of its last `usage` reading (a reading's `context` goes to its `project`'s pilot). Kept in `pilots.json`; no command history. A line stays until removed: the strip's **Clear idle pilots** button removes the `idle` ones (of the selected project).
 
 `usage` takes the JSON the Claude desktop app's `get_usage` tool returns (`plan.windows[]`: `label`, `percentUsed`, `resetsAt`; `context`: `tokensUsed`, `contextWindow`, `percentUsed`, `autoCompactsAtPercent`; either may have a `status` other than `ok`). Only the latest reading is kept (`usage.json` in the data dir). The page shows one gauge per window with the time left until `resetsAt`, a `Context` gauge with a mark at the auto-compact threshold, and the reading's age; gauges turn orange from 80 % and red from 95 % (of the threshold, for the context). Claude Code's status line would be the natural source, but it doesn't run in the desktop app.
 
@@ -75,6 +75,7 @@ JSON, CORS open (`Access-Control-Allow-Origin: *`), so a page served elsewhere c
 | `POST /api/events` | `{agent?, port?, kind, text?, data?, ...}`; without `agent`, resolved from `port` (the most recently updated agent with that port, among the event's `project` when it has one; an unknown port creates the agent `port-<n>`). The server sets `ts` |
 | `GET /api/state` | agents, each with its last action and last run, and `usage` (the latest reading, or null) |
 | `POST /api/pilot` | `{project, status?, waiting?, context?}`: upserts that project's pilot line; broadcast as `{type: 'pilots', pilots}`; `/api/state` returns `pilots` |
+| `POST /api/pilots/clear-idle` | `{project?}`: removes the idle pilots (of that project only, when given); returns `{removed}` |
 | `POST /api/usage` | the plan limits / context reading (see `board.py usage`); kept, then broadcast as `{type: 'usage', usage}` |
 | `GET /api/agents/<id>/events` | `{events, runs}` of one agent |
 | `GET /api/runs?suite=&project=` | test runs, newest first, each with its tests |

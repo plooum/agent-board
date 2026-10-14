@@ -27,7 +27,8 @@
   #conn { margin-left: auto; font-size: 12px; color: var(--dim); margin-right: 10px; }
   header button#theme { border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; font-size: 12px; }
   #archidle { display: block; margin: 0 0 8px auto; background: none; border: 1px solid var(--line); border-radius: 4px; color: var(--dim); font: inherit; font-size: 12px; padding: 2px 8px; cursor: pointer; }
-  #archidle:hover { color: var(--fg); }
+  #archidle:hover, #clearidle:hover { color: var(--fg); }
+  #clearidle { background: none; border: 1px solid var(--line); border-radius: 4px; color: var(--dim); font: inherit; padding: 1px 8px; cursor: pointer; }
   #archidle.hidden { display: none; }
   #usage { padding: 4px 14px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--dim); }
   #usage .row { display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: center; padding: 2px 0; }
@@ -169,8 +170,16 @@
       h += `<div class="row"><span class="g"><span class="dot ${p.status === 'busy' ? 'working' : p.status === 'waiting' ? 'review' : ''}"></span>` +
         `<b>Pilot · ${esc(project.split('/').pop())}</b>${st}</span>${ctx}<span class="age">updated ${ago(p.ts)}</span></div>`;
     }
+    const idle = Object.entries(state.pilots || {}).filter(([k, p]) => p.status === 'idle' && (!state.project || k === state.project)).length;
+    if (idle) h += `<div class="row"><button id="clearidle" title="Remove the idle pilots' lines (of the selected project)">Clear idle pilots (${idle})</button></div>`;
     return h;
   }
+  // The strip is rebuilt whole, so the button is handled by delegation.
+  $('usage').addEventListener('click', async (e) => {
+    if (e.target.id !== 'clearidle') return;
+    await fetch('/api/pilots/clear-idle', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: state.project || null }) });
+  });
   setInterval(renderUsage, 60000);
 
   // The page is updated in place: elements are keyed, created once, and only touched when their data changed

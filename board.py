@@ -200,6 +200,15 @@ class Store:
             self.pilots_file.write_text(json.dumps(self.pilots), encoding='utf-8')
         self.broadcast({'type': 'pilots', 'pilots': self.pilots})
 
+    def clear_idle_pilots(self, project=None):
+        with self.lock:
+            gone = [k for k, p in self.pilots.items() if p.get('status') == 'idle' and (not project or k == project)]
+            for k in gone:
+                del self.pilots[k]
+            self.pilots_file.write_text(json.dumps(self.pilots), encoding='utf-8')
+        self.broadcast({'type': 'pilots', 'pilots': self.pilots})
+        return gone
+
     def put_frame(self, agent_id, jpeg):
         now = time.time()
         with self.lock:
@@ -374,6 +383,8 @@ def make_handler(store, page):
                 if u.path == '/api/usage':
                     store.put_usage(body)
                     return self._send(200, {'ok': True})
+                if u.path == '/api/pilots/clear-idle':
+                    return self._send(200, {'removed': store.clear_idle_pilots(body.get('project'))})
                 if u.path == '/api/pilot':
                     store.put_pilot(body)
                     return self._send(200, {'ok': True})
