@@ -83,6 +83,11 @@ class Store:
             self.usage = json.loads(self.usage_file.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             self.usage = None
+        self.pilots_file = self.dir / 'pilots.json'  # project -> {status, waiting, context, ts}: one line per pilot
+        try:
+            self.pilots = json.loads(self.pilots_file.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            self.pilots = {}
         self.load()
 
     # ---- persistence -------------------------------------------------
@@ -179,6 +184,30 @@ class Store:
             self.usage = usage
             self.usage_file.write_text(json.dumps(usage), encoding='utf-8')
         self.broadcast({'type': 'usage', 'usage': usage})
+        if usage.get('project') and usage.get('context'):  # the context window belongs to that project's pilot
+            self.put_pilot({'project': usage['project'], 'context': usage['context']})
+
+    def put_pilot(self, body):
+        project = body.get('project')
+        if not project:
+            raise ValueError('project required')
+        with self.lock:
+            p = self.pilots.setdefault(project, {'status': 'idle'})
+            p.update({k: body[k] for k in ('status', 'waiting', 'context') if k in body})
+            if p.get('status') != 'waiting':
+                p.pop('waiting', None)
+            p['ts'] = time.time()
+            self.pilots_file.write_text(json.dumps(self.pilots), encoding='utf-8')
+        self.broadcast({'type': 'pilots', 'pilots': self.pilots})
+
+    def clear_idle_pilots(self, project=None):
+        with self.lock:
+            gone = [k for k, p in self.pilots.items() if p.get('status') == 'idle' and (not project or k == project)]
+            for k in gone:
+                del self.pilots[k]
+            self.pilots_file.write_text(json.dumps(self.pilots), encoding='utf-8')
+        self.broadcast({'type': 'pilots', 'pilots': self.pilots})
+        return gone
 
     def put_frame(self, agent_id, jpeg):
         now = time.time()
@@ -248,7 +277,7 @@ class Store:
 
     def state(self):
         with self.lock:
-            return {'agents': sorted((self.agent_view(a) for a in self.agents.values()), key=lambda a: -a['updated']), 'now': time.time(), 'usage': self.usage}
+            return {'agents': sorted((self.agent_view(a) for a in self.agents.values()), key=lambda a: -a['updated']), 'now': time.time(), 'usage': self.usage, 'pilots': self.pilots}
 
     def agent_events(self, agent_id):
         with self.lock:
@@ -354,6 +383,11 @@ def make_handler(store, page):
                 if u.path == '/api/usage':
                     store.put_usage(body)
                     return self._send(200, {'ok': True})
+                if u.path == '/api/pilots/clear-idle':
+                    return self._send(200, {'removed': store.clear_idle_pilots(body.get('project'))})
+                if u.path == '/api/pilot':
+                    store.put_pilot(body)
+                    return self._send(200, {'ok': True})
                 if u.path == '/api/agents/archive':
                     return self._send(200, {'archived': store.archive_except(body.get('except') or [], body.get('project'))})
                 if len(parts) == 3 and parts[:2] == ['api', 'agents']:
@@ -421,6 +455,9 @@ def main():
     r.add_argument('--all-projects', action='store_true')
     g = sub.add_parser('usage', help="the pilot's plan limits / context reading (the app's get_usage output), as JSON")
     g.add_argument('--file', default='-', help='JSON file, or - for stdin (default)')
+    pl = sub.add_parser('pilot', help="the current directory's project pilot: busy, waiting (for the user) or idle")
+    pl.add_argument('--status', required=True, choices=('busy', 'waiting', 'idle'))
+    pl.add_argument('--waiting', help='what the pilot waits for from the user (with --status waiting)')
     args = ap.parse_args()
     if args.cmd == 'serve':
         serve(args)
@@ -438,6 +475,8 @@ def main():
         body = json.loads(raw)
         body.update(ts=time.time(), project=project_of('.'))
         post(args, '/api/usage', body)
+    elif args.cmd == 'pilot':
+        post(args, '/api/pilot', {'project': project_of('.'), 'status': args.status, 'waiting': args.waiting or ''})
 
 
 if __name__ == '__main__':
