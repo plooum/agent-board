@@ -29,7 +29,9 @@
   #archidle { display: block; margin: 0 0 8px auto; background: none; border: 1px solid var(--line); border-radius: 4px; color: var(--dim); font: inherit; font-size: 12px; padding: 2px 8px; cursor: pointer; }
   #archidle:hover { color: var(--fg); }
   #archidle.hidden { display: none; }
-  #usage { display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: center; padding: 6px 14px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--dim); }
+  #usage { padding: 4px 14px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--dim); }
+  #usage .row { display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: center; padding: 2px 0; }
+  #usage .wait { color: var(--warn); font-weight: 600; }
   #usage .g { display: flex; align-items: center; gap: 8px; }
   #usage .g b { color: var(--fg); font-weight: 600; }
   #usage .bar { position: relative; width: 120px; height: 6px; border-radius: 3px; background: var(--line); }
@@ -144,21 +146,30 @@
   };
   function renderUsage() {
     const u = state.usage;
-    $('usage').classList.toggle('hidden', !u);
-    if (!u) return;
+    $('usage').classList.toggle('hidden', !u && !Object.keys(state.pilots || {}).length);
+    if (!u) { $('usage').innerHTML = pilotRows(); return; }
     const short = { '5-hour limit': '5h', 'Weekly · all models': 'Week' };
     let h = '';
     if (u.plan && u.plan.status === 'ok') {
       for (const w of u.plan.windows || []) h += gauge(short[w.label] || w.label, w.percentUsed, `${w.percentUsed} %` + (w.resetsAt ? ` · resets in ${left(w.resetsAt)}` : ''));
     } else if (u.plan) h += `<span class="g"><b>Plan</b>${esc(u.plan.status)}${u.plan.note ? ' · ' + esc(u.plan.note) : ''}</span>`;
-    const c = u.context;
-    if (c && c.status === 'ok') {
-      const at = c.autoCompactsAtPercent || 100;
-      h += gauge('Context', c.percentUsed, `${kTok(c.tokensUsed)} / ${kTok(c.contextWindow)} · ${c.percentUsed} %`, at, c.autoCompactsAtPercent);
-    } else if (c) h += `<span class="g"><b>Context</b>${esc(c.status)}</span>`;
-    const age = Math.max(0, Math.round((Date.now() / 1000 - u.ts) / 60));
-    h += `<span class="age">updated ${age ? age + ' min ago' : 'just now'}</span>`;
-    $('usage').innerHTML = h;
+    $('usage').innerHTML = `<div class="row">${h}<span class="age">updated ${ago(u.ts)}</span></div>` + pilotRows();
+  }
+  const ago = (ts) => { const m = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60)); return m ? m + ' min ago' : 'just now'; };
+  // One line per project's pilot (the selected project's only): busy / waiting for the user / idle, and its context window.
+  function pilotRows() {
+    let h = '';
+    for (const [project, p] of Object.entries(state.pilots || {})) {
+      if (state.project && project !== state.project) continue;
+      const st = p.status === 'waiting' ? `<span class="wait">waiting for you${p.waiting ? ': ' + esc(p.waiting) : ''}</span>` : esc(p.status);
+      let ctx = '';
+      const c = p.context;
+      if (c && c.status === 'ok') ctx = gauge('Context', c.percentUsed, `${kTok(c.tokensUsed)} / ${kTok(c.contextWindow)} · ${c.percentUsed} %`, c.autoCompactsAtPercent || 100, c.autoCompactsAtPercent);
+      else if (c) ctx = `<span class="g"><b>Context</b>${esc(c.status)}</span>`;
+      h += `<div class="row"><span class="g"><span class="dot ${p.status === 'busy' ? 'working' : p.status === 'waiting' ? 'review' : ''}"></span>` +
+        `<b>Pilot · ${esc(project.split('/').pop())}</b>${st}</span>${ctx}<span class="age">updated ${ago(p.ts)}</span></div>`;
+    }
+    return h;
   }
   setInterval(renderUsage, 60000);
 
@@ -192,7 +203,7 @@
   $('project').onchange = (e) => {
     state.project = e.target.value;
     try { localStorage.setItem('agent-board-project', state.project); } catch (err) { /* private mode: not remembered */ }
-    state.suite = ''; renderAgents(); if (state.tab === 'tests') renderTests();
+    state.suite = ''; renderAgents(); renderUsage(); if (state.tab === 'tests') renderTests();
   };
   const inProject = (a) => !state.project || a.project === state.project;
 
@@ -399,7 +410,7 @@
 
   async function refresh() {
     const st = await get('/api/state');
-    state.agents = st.agents; state.usage = st.usage; renderUsage();
+    state.agents = st.agents; state.usage = st.usage; state.pilots = st.pilots; renderUsage();
     if (!state.sel && state.agents.length) { state.sel = (state.agents.find((a) => a.status !== 'archived') || state.agents[0]).id; }
     renderAgents();
     await loadDetail();
@@ -413,6 +424,7 @@
       let d = {}; try { d = JSON.parse(m.data); } catch (e) { /* ignore */ }
       if (d.type === 'frame') { onFrame(d.agent, d.ts); return; }
       if (d.type === 'usage') { state.usage = d.usage; renderUsage(); return; }
+      if (d.type === 'pilots') { state.pilots = d.pilots; renderUsage(); return; }
       later();
       const k = d.event && d.event.kind;
       if (state.tab === 'tests' && (k === 'run-start' || k === 'run-end')) renderTests();

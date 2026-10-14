@@ -32,4 +32,8 @@ Puis mets son statut à jour :
 
 Dans l'app de bureau Claude, à chaque étape (début de session, lancement, relecture, merge) : appelle l'outil `get_usage` de l'app, écris sa sortie JSON telle quelle dans un fichier de ton dossier temporaire, puis `python3 $B usage --file <ce fichier>`. Le board affiche les limites de 5 h et hebdomadaire, et ta fenêtre de contexte. Préviens l'utilisateur quand une limite approche de 80 %.
 
+## État du pilote
+
+Le pilote tient sa ligne à jour (depuis le checkout du projet) : `python3 $B pilot --status busy` quand il travaille, `--status waiting --waiting "<ce qu'il attend, en une ligne>"` dès qu'il attend l'utilisateur (un accord de merge, une décision), `--status idle` quand il n'a plus rien en cours. Sa fenêtre de contexte s'y affiche avec le relevé `usage`.
+
 `board.py` sort avec le code 0, sans rien dire, quand le board est arrêté. Les actions viennent du hook global `PostToolUse` ; les lanceurs de tests rendent compte par l'API HTTP et `board_stream.py` (voir le README, « Plug in a test runner » et « Plug in a browser screencast »).
