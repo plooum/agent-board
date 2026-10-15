@@ -36,6 +36,6 @@ Fais-le **à la fin de chaque tâche**, c'est-à-dire chaque fois que tu rends l
 
 ## État du pilote
 
-Le pilote tient sa ligne à jour (depuis le checkout du projet) : `python3 $B pilot --status busy` quand il travaille, `--status waiting --waiting "<ce qu'il attend, en une ligne>"` dès qu'il attend l'utilisateur (un accord de merge, une décision), `--status idle` quand il n'a plus rien en cours. Sa fenêtre de contexte s'y affiche avec le relevé `usage`.
+Le pilote tient sa ligne à jour (depuis le checkout du projet) : `python3 $B pilot --status busy` quand il travaille, `--status waiting --waiting "<ce qu'il attend, en une ligne>"` dès qu'il attend l'utilisateur (un accord de merge, une décision), `--status idle` quand il n'a plus rien en cours. **Dès qu'il reprend après une attente** (l'utilisateur répond, un sous-agent rend son rapport), sa première action est `--status busy`, avant tout le reste ; et il repasse en `waiting` juste avant de rendre la main. Sa fenêtre de contexte s'y affiche avec le relevé `usage`.
 
 `board.py` sort avec le code 0, sans rien dire, quand le board est arrêté. Les actions viennent du hook global `PostToolUse` ; les lanceurs de tests rendent compte par l'API HTTP et `board_stream.py` (voir le README, « Plug in a test runner » et « Plug in a browser screencast »).
