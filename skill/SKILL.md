@@ -30,7 +30,9 @@ Puis mets son statut à jour :
 
 ## Usage (limites du forfait, fenêtre de contexte)
 
-Dans l'app de bureau Claude, à chaque étape (début de session, lancement, relecture, merge) : appelle l'outil `get_usage` de l'app, écris sa sortie JSON telle quelle dans un fichier de ton dossier temporaire, puis `python3 $B usage --file <ce fichier>`. Le board affiche les limites de 5 h et hebdomadaire, et ta fenêtre de contexte. Préviens l'utilisateur quand une limite approche de 80 %.
+**Le bandeau (5 h, hebdo, contexte) ne se met pas à jour tout seul : c'est à toi de le rafraîchir, régulièrement.** Dans l'app de bureau Claude, appelle l'outil `get_usage` de l'app, écris sa sortie JSON telle quelle dans un fichier de ton dossier temporaire (ou passe-la sur l'entrée standard), puis `python3 $B usage --file <ce fichier>`.
+
+Fais-le **à la fin de chaque tâche**, c'est-à-dire chaque fois que tu rends la main à l'utilisateur, et aussi à chaque étape de la boucle : début de session, lancement d'un sous-agent, relecture, merge. Un bandeau périmé est un bug : l'utilisateur s'en sert pour suivre ses limites. Préviens l'utilisateur quand une limite approche de 80 %.
 
 ## État du pilote
 
